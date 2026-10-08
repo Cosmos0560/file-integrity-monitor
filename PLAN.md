@@ -134,6 +134,17 @@ permission weakening, file-to-symlink swaps) without noisy fields.
 **Reason:** "never follow" makes the walk finite and predictable; recording the link itself still
 detects the classic "replace file with symlink" attack (that is a `type_changed`).
 - [x] approved
+- **D6 note (v0.3.3, link target text):** `link_target` is the exact string `readlink` returns
+  and is stored and compared as is (D14). On Windows an absolute target comes back in
+  extended-length form, for example `\\?\C:\dir\target.txt` (seen on the CI runners and on the
+  development machine). Only the display layer changes it, with
+  `core/pathrules.display_link_target`: a leading `\\?\C:\` is shown as `C:\`, and
+  `\\?\UNC\server\share` as `\\server\share`. Other extended forms, such as
+  `\\?\Volume{...}`, are left alone because dropping the prefix would show a different path.
+  The rule applies to the Windows flavour only; on POSIX a backslash is an ordinary name
+  character. Reason for display-only: the prefix is how the system spells the path, not what the
+  link says; but a link retargeted from `C:\x` to `\\?\C:\x` is still a changed link text and
+  is reported as a change of the stored value, which is the conservative reading.
 
 ### D7 - Permissions coverage per OS
 **Recommendation:**
@@ -298,6 +309,9 @@ versions) at its root, instead of recording a Unicode version in the header or f
 A test builds storage keys for code points whose general category differs between Unicode 14,
 15.0 and 15.1 and proves they are identical whatever the running Python's tables say.
 - [x] approved
+- **D14 note (v0.3.3):** link targets follow the same rule as record paths: stored exact,
+  displayed through the sanitiser, with the Windows extended-length prefix handled in the display
+  only (see the D6 note).
 
 ---
 
@@ -625,3 +639,14 @@ report written. Tagging and pushing are yours.
   (8) a directory reached twice (same device and inode) is entered once and marks the run
   incomplete; (9) a pytest marker `requires_non_root` was added next to the three named in
   CLAUDE.md, for chmod-based tests that the superuser would pass for the wrong reason.
+- v0.3.3 (2026-10-08): the owner accepted all nine Phase 2 deviations of v0.3.2. First CI run of
+  Phase 2: Linux green on 3.11, 3.12 and 3.13; Windows failed three symlink tests that had been
+  skipped locally, because `os.readlink` returns the extended-length prefix. Decision: link
+  targets are stored raw and only displayed normalised (D6 and D14 notes above). Phase 3
+  decisions, approved by the owner: (a) `fim baseline` refuses with exit code 2 and a clear
+  message when a configured root is a symlink or a reparse point, as D6 says (the scanner keeps
+  reporting it as a root_unavailable issue; `check` reports it as a finding); (b) the rollback
+  anchor file starts with a fixed header line, like the key and baseline files; the hygiene tests
+  recognise it by that header, and the anchor's file name pattern is added to .gitignore;
+  (c) the configuration file is read through fs/safe_files.py with a no-follow read capped at
+  MAX_CONFIG_BYTES and the usual path refusals (invariant 3).

@@ -28,7 +28,7 @@ from fim.core.models import (
     ScanResult,
     SymlinkPolicy,
 )
-from fim.core.pathrules import Flavour, validate_user_path
+from fim.core.pathrules import Flavour, display_link_target, validate_user_path
 from fim.core.perms import (
     FILE_ATTRIBUTE_HIDDEN,
     FILE_ATTRIBUTE_READONLY,
@@ -316,8 +316,13 @@ def test_symlinks_are_recorded_as_links_and_never_entered(tmp_path: Path) -> Non
     for name in ("filelink", "dirlink", "dangling", "loop"):
         assert records[name].type is EntryType.SYMLINK
         assert records[name].hash_status is HashStatus.NOT_APPLICABLE
-    assert records["filelink"].link_target == str(watched / "real.txt")
-    assert records["dangling"].link_target == str(watched / "gone")
+    # Stored exactly as readlink returns it (on Windows that is the extended-length form).
+    assert records["filelink"].link_target == winhelp.readlink_text(watched / "real.txt")
+    assert records["dangling"].link_target == winhelp.readlink_text(watched / "gone")
+    assert records["filelink"].link_target == os.readlink(watched / "filelink")
+    # Only the display layer normalises it.
+    shown = display_link_target(records["filelink"].link_target or "", FLAVOUR)
+    assert shown == str(watched / "real.txt")
     assert "dirlink/secret.txt" not in paths(result)
     assert not any(path.startswith("loop/") for path in paths(result))
     assert result.complete

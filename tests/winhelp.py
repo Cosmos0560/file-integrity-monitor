@@ -30,3 +30,15 @@ def set_windows_attributes(path: Path, attributes: int) -> None:
             raise OSError(f"SetFileAttributesW failed for {path.name}")
     else:
         raise RuntimeError("file attributes exist only on Windows")
+
+
+EXTENDED_PREFIX = chr(92) * 2 + "?" + chr(92)  # the four characters \?\
+
+
+def readlink_text(target: Path) -> str:
+    """What os.readlink returns for a link created with the absolute path ``target``.
+
+    On Windows that is the extended-length form (verified on the CI runners and locally);
+    on POSIX it is the target text unchanged.
+    """
+    return EXTENDED_PREFIX + str(target) if sys.platform == "win32" else str(target)

@@ -20,6 +20,7 @@ import pytest
 import winhelp
 from fim.core.limits import HASH_CHUNK_BYTES
 from fim.core.models import HashStatus
+from fim.core.pathrules import Flavour, display_link_target
 from fim.core.perms import FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT
 from fim.fs import observe
 from fim.fs.observe import (
@@ -30,6 +31,7 @@ from fim.fs.observe import (
     ReadOps,
 )
 
+FLAVOUR = Flavour.WINDOWS if sys.platform == "win32" else Flavour.POSIX
 NS = 1_700_000_000_123_456_700  # a multiple of 100 ns: NTFS keeps no finer time
 BIG = 1 << 30
 
@@ -123,7 +125,8 @@ def test_lstat_describes_the_link_and_stat_target_the_file(tmp_path: Path) -> No
     assert stat.S_ISREG(followed.st_mode)
     assert followed.size == 5
     assert described.size != 5 or not stat.S_ISREG(described.st_mode)
-    assert observe.read_link(str(link)) == str(target)
+    assert observe.read_link(str(link)) == winhelp.readlink_text(target)  # raw, stored as is
+    assert display_link_target(winhelp.readlink_text(target), FLAVOUR) == str(target)
 
 
 @pytest.mark.requires_symlinks
@@ -131,7 +134,10 @@ def test_a_dangling_link_can_be_described_and_read_but_not_followed(tmp_path: Pa
     link = tmp_path / "dangling"
     os.symlink(tmp_path / "gone", link)
     assert isinstance(observe.lstat(str(link)), RawStat)
-    assert observe.read_link(str(link)) == str(tmp_path / "gone")
+    assert observe.read_link(str(link)) == winhelp.readlink_text(tmp_path / "gone")
+    assert display_link_target(winhelp.readlink_text(tmp_path / "gone"), FLAVOUR) == str(
+        tmp_path / "gone"
+    )
     followed = observe.stat_target(str(link))
     assert isinstance(followed, FsProblem)
     assert followed.vanished

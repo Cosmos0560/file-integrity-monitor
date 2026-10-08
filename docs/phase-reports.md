@@ -5,16 +5,25 @@ section 2. The last entry is what a new session reads first.
 
 ## In progress
 
-Nothing is in progress. Phase 2 is complete and committed locally; nothing is pushed.
+Nothing is in progress. Phase 2 is complete, its CI follow-up is fixed (below), and nothing after
+the CI-fix commit is pushed. Do not start Phase 3 before the owner says so.
 
-Resume with Phase 3 (key, baseline format, `init-key` and `baseline`; depends on D2, D3) after
-the owner has pushed, looked at the Actions result for Phase 2 (it will be the first run of the
-symlink and POSIX-only tests, which this machine skips) and accepted or rejected the Phase 2
-deviations listed below. Decisions wanted before or at the start of Phase 3: (1) `baseline` must
-refuse to write a baseline while the scan holds a root_unavailable issue, including a root that
-is a link (deviation 5); (2) how the rollback anchor file (D3 amendment) is recognised by the
-hygiene tests; (3) reading the config file through fs/safe_files.py, which Phase 2 deliberately
-left out (deviation 4).
+Accepted by the owner: all nine Phase 2 deviations (PLAN.md changelog v0.3.2 and v0.3.3).
+
+Decisions for Phase 3, approved by the owner (PLAN.md changelog v0.3.3):
+(a) `fim baseline` refuses with exit code 2 and a clear message when a configured root is a
+symlink or a reparse point, as D6 says; (b) the rollback anchor file starts with a fixed header
+line, like the key and baseline files, the hygiene tests recognise it by that header, and its
+file name pattern is added to .gitignore; (c) the config file is read through fs/safe_files.py
+with a no-follow read capped at MAX_CONFIG_BYTES and the usual path refusals.
+
+CI follow-up to Phase 2: the first CI run was green on Linux (3.11, 3.12, 3.13) and red on
+Windows (all three Pythons, 3 tests, the first real Windows run of the symlink tests): `os.readlink`
+returns an absolute target with the extended-length prefix. Fixed by the D6/D14 rule that link
+targets are stored exactly and the prefix is stripped only for display
+(`core/pathrules.display_link_target`, with a pure unit test file that runs on every OS). The three
+tests now assert the real Windows value. With Windows Developer Mode enabled the 8 symlink tests
+run on the development machine; 8 POSIX-only tests are still skipped there.
 
 ## Phase 1 - Foundation, gate, CI, pure core (2026-10-08)
 

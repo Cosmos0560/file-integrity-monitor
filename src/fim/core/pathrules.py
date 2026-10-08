@@ -30,6 +30,7 @@ __all__ = [
     "WINDOWS_RESERVED_NAMES",
     "Flavour",
     "UserPath",
+    "display_link_target",
     "display_path",
     "expand_tilde",
     "is_reserved_windows_name",
@@ -288,3 +289,30 @@ def expand_tilde(path: UserPath, home: UserPath) -> UserPath:
     if home.flavour is not path.flavour:
         raise PathRuleError("the home directory uses a different path flavour")
     return UserPath(path.flavour, home.drive, True, False, home.parts + path.parts)
+
+
+# Windows readlink() returns an absolute target in extended-length form. The prefix is how the
+# system spells the path, not part of what the link says to a human, so only the display strips it.
+_EXTENDED_UNC = re.compile(r"\\\\\?\\UNC\\", re.IGNORECASE)
+_EXTENDED_DRIVE = re.compile(r"\\\\\?\\(?=[A-Za-z]:(?:[\\/]|$))")
+
+
+def display_link_target(raw: str, flavour: Flavour) -> str:
+    r"""A symlink target, exactly as ``readlink`` returned it, made fit to show (PLAN.md D6, D14).
+
+    Storage and comparison always use ``raw``; this is for output only. On Windows a leading
+    ``\\?\C:\`` is shown as ``C:\`` and ``\\?\UNC\server\share`` as ``\\server\share``; other
+    extended forms (``\\?\Volume{...}``) are left as they are, because dropping the prefix there
+    would invent a different path. Components are escaped one by one and the original
+    separators are kept, so a path never shows doubled backslashes.
+    """
+    text = raw
+    if flavour is Flavour.WINDOWS:
+        if _EXTENDED_UNC.match(text):
+            text = "\\\\" + text[len("\\\\?\\UNC\\") :]
+        else:
+            text = _EXTENDED_DRIVE.sub("", text, count=1)
+        pieces = re.split(r"([\\/])", text)
+    else:
+        pieces = re.split(r"(/)", text)
+    return "".join(piece if piece in ("\\", "/") else escape(piece) for piece in pieces)
