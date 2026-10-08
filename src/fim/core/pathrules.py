@@ -8,9 +8,10 @@ device paths, NT object paths, Windows reserved device names, drive-relative pat
 components, control characters and over-long paths. Whether a path really points at a link or a
 reparse point is the job of fs/safe_files.py; this module only decides what text is acceptable.
 
-A path is kept as components, never as one string with a guessed separator. Escaping is applied
-per component, records are stored root-relative with "/" separators, and the native separator
-is used only to display, so a Windows path never shows doubled backslashes.
+A path is kept as components, never as one string with a guessed separator. Records are stored
+root-relative with "/" separators and in their exact original form (PLAN.md D14); escaping is for
+display only, applied per component, and the native separator is used only to display, so a
+Windows path never shows doubled backslashes.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 
 from fim.core.errors import PathRuleError
 from fim.core.limits import MAX_DEPTH_CEILING, MAX_PATH_CHARS
-from fim.core.sanitize import InvalidEscapeError, clip_escaped, escape, first_unsafe, unescape
+from fim.core.sanitize import clip_escaped, escape, first_unsafe
 
 __all__ = [
     "RECORD_SEPARATOR",
@@ -240,28 +241,28 @@ def is_within(path: UserPath, root: UserPath) -> bool:
 
 
 def record_path(parts: Sequence[str]) -> str:
-    """The stored form of a path below its root: components escaped, joined with "/"."""
+    """The stored form of a path below its root: exact components joined with "/" (D14).
+
+    Nothing is escaped here: the baseline holds the path as the filesystem reports it, lone
+    surrogates included, and canonical JSON is what makes it safe to write.
+    """
     for part in parts:
         if part in ("", ".", ".."):
             raise PathRuleError(f"invalid path component '{clip_escaped(part, 20)}'")
         if RECORD_SEPARATOR in part:
             raise PathRuleError("a path component cannot contain '/'")
-    return RECORD_SEPARATOR.join(escape(part) for part in parts)
+    return RECORD_SEPARATOR.join(parts)
 
 
 def split_record_path(text: str) -> tuple[str, ...]:
     """Invert ``record_path``. The empty string is the root itself."""
     if text == "":
         return ()
-    parts: list[str] = []
-    for piece in text.split(RECORD_SEPARATOR):
+    pieces = text.split(RECORD_SEPARATOR)
+    for piece in pieces:
         if piece in ("", ".", ".."):
             raise PathRuleError(f"invalid record path '{clip_escaped(text, _MESSAGE_PATH_CHARS)}'")
-        try:
-            parts.append(unescape(piece))
-        except InvalidEscapeError:
-            raise PathRuleError("record path is not in canonical escaped form") from None
-    return tuple(parts)
+    return tuple(pieces)
 
 
 def display_path(root: UserPath, record: str) -> str:
@@ -273,6 +274,5 @@ def display_path(root: UserPath, record: str) -> str:
     base = root.display()
     if record == "":
         return base
-    # Validate the record path: it must be a canonical escaped path.
     tail = root.sep.join(escape(part) for part in split_record_path(record))
     return base + tail if base.endswith(root.sep) else base + root.sep + tail

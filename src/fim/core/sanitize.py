@@ -1,7 +1,7 @@
 """The single sanitiser (PLAN.md D10): every string that comes from the filesystem passes here
 before it is stored or shown.
 
-``escape`` is injective and reversible, so the escaped text in a baseline stands for exactly one
+``escape`` is injective and reversible, so the escaped text on screen stands for exactly one
 path and ``unescape(escape(s)) == s`` for every string, including lone surrogates:
 
 * ``\\`` becomes ``\\\\``;
@@ -16,8 +16,10 @@ path and ``unescape(escape(s)) == s`` for every string, including lone surrogate
 All hex digits are lower case. Confusable glyphs (Latin "a" and Cyrillic "a") are not solved;
 that is documented, not hidden.
 
-Unassigned characters (Cn) are decided by the running Python's Unicode tables, which differ
-between Python versions for newly assigned characters; see docs/phase-reports.md.
+Display only (PLAN.md D14): unassigned (Cn) and newly assigned format characters are decided by
+the running Python's Unicode tables, which differ between Python versions. That is harmless for
+output but would not be for storage, so the baseline never holds escaped text: it holds the exact
+path, serialised by core/canonical.py.
 """
 
 from __future__ import annotations

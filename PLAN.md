@@ -1,6 +1,6 @@
 # PLAN.md - file-integrity-monitor (fim)
 
-Design and phase plan for Project 3. Status: **approved (v0.2): all decisions D1-D13 approved, four with amendments.**
+Design and phase plan for Project 3. Status: **approved (v0.3): all decisions D1-D14 approved, five with amendments.**
 Rules for working on this plan are in CLAUDE.md. No phase starts until the decisions it depends
 on are approved.
 
@@ -63,8 +63,9 @@ threat model and README, not hidden.
   (`MAX_BASELINE_BYTES`), MAC-verified with `hmac.compare_digest`, and only then parsed.
 - Unknown `format` or `version` is refused. No migrations in v1; a future v2 reader adds explicit
   migration code and tests.
-- Paths in the baseline are stored in the canonical escaped form (D10), so the file contains no
-  raw control or bidi characters.
+- Paths in the baseline are stored in their exact original form (D14), serialised by canonical
+  JSON with `ensure_ascii`, so the file contains no raw control or bidi characters because JSON
+  escapes every non-ASCII character.
 - Re-baselining is `fim baseline --force` (full rescan). No incremental "accept this change" in v1.
 - Rollback (an attacker replaces the baseline with an older, validly signed one) cannot be
   detected without trusted external state. v1 mitigation: `check` always prints the baseline's
@@ -190,7 +191,8 @@ the SIEM from being flooded with the same finding every cycle.
 - [x] approved
 
 ### D10 - Canonical path text and output encoding
-**Recommendation:** one escaping function in `core/sanitize.py`, used for storage and all output.
+**Recommendation:** one escaping function in `core/sanitize.py`, used for all output (amended by
+D14: not for storage).
 - Injective and reversible: `\` becomes `\\`; C0/C1 controls and DEL become `\xHH`; characters of
   Unicode category Cf, Zl, Zp, Co, Cn and non-ASCII Zs (bidi controls, zero-width, BOM, line
   separators, private use, unassigned) become `\uXXXX` / `\UXXXXXXXX`; undecodable POSIX bytes
@@ -203,13 +205,19 @@ the SIEM from being flooded with the same finding every cycle.
 - The CLI writes to stdout with `errors="backslashreplace"`, so a cp1252 Windows console cannot
   crash the tool.
 - Not solved, and documented: visually confusable characters (Latin "a" vs Cyrillic "а").
-**Reason:** one function means one place to get right; storing escaped text means what the user
-sees equals what the baseline holds.
-- [x] approved with amendment (v0.2)
+**Reason:** one function means one place to get right.
+- [x] approved with amendments (v0.2, v0.3)
 - **D10 amendment (readable Windows paths):** record paths are stored relative to their root with
-  "/" separators, and escaping is applied per path component. Roots are stored and displayed per
-  component as well, joined with the native separator only for display. A Windows path must
-  therefore never show doubled backslashes in table output; a test covers this.
+  "/" separators. Roots are displayed per component, escaped one by one and joined with the native
+  separator only for display. A Windows path must therefore never show doubled backslashes in
+  table output; a test covers this.
+- **D10 amendment (v0.3, see D14):** the sanitiser is used only for display and output (table,
+  the text fields of the JSON report, JSONL, CSV, messages and exceptions). It is not used for
+  storage or comparison. The sentence "storing escaped text means what the user sees equals what
+  the baseline holds" is withdrawn: the baseline holds the exact path, the user sees the escaped
+  form. Reason: whether a code point is escaped (category Cn, newly assigned Cf) depends on the
+  running Python's Unicode tables, so storing escaped text would make a baseline written under
+  one Python compare differently under another.
 
 ### D11 - Limits (initial values; `core/limits.py`)
 | Constant | Default | Hard ceiling |
@@ -273,6 +281,23 @@ Not published to PyPI; releases are your GitHub tags.
 - **D13 amendment:** the `.venv` is created with Python 3.13 explicitly
   (`uv venv --python 3.13 .venv`, or `py -3.13 -m venv .venv` if uv is unavailable), never the
   machine default (which is 3.14). The Commands section of CLAUDE.md matches.
+
+### D14 - Record paths are stored exactly, escaped only for display
+**Decision:** a record path is stored in the baseline in its exact original form: relative to its
+root, components joined with "/", lossless, including lone surrogates (POSIX bytes that do not
+decode, carried by `surrogateescape`). The only serialisation is canonical JSON
+(`core/canonical.py`) with `ensure_ascii=True`, which writes every non-ASCII character and lone
+surrogate as a `\uXXXX` escape. Storage keys, hashes of paths and comparisons never depend on the
+Unicode database of the running Python: two Pythons with different Unicode versions produce
+identical bytes for the same path. The sanitiser in `core/sanitize.py` is used only for display
+and output (table, the text fields of the JSON report, JSONL, CSV, error messages and
+exceptions). Model rule: `FileRecord.path` and `FileRecord.link_target` hold exact text;
+`Finding.path`, `ScanIssue.path`, `Change` values and evidence hold escaped text.
+**Reason:** removes known gap 2 of the Phase 1 report (Unicode tables differ between Python
+versions) at its root, instead of recording a Unicode version in the header or freezing a table.
+A test builds storage keys for code points whose general category differs between Unicode 14,
+15.0 and 15.1 and proves they are identical whatever the running Python's tables say.
+- [x] approved
 
 ---
 
@@ -573,3 +598,7 @@ report written. Tagging and pushing are yours.
 - v0.2.1 acceptance (2026-10-08): the owner accepted every deviation listed in v0.2.1 above
   (items 1-9 of the Phase 1 report). The pytest path guard for fs/ modules is built with
   fs/observe.py in Phase 2 and fs/safe_files.py in Phase 3.
+- v0.3 (2026-10-08): D14 added and approved: record paths are stored exactly and serialised only
+  by canonical JSON with `ensure_ascii=True`; the sanitiser is display-only. D10 amended to match
+  (the "escaped storage" reasoning is withdrawn) and the D3 bullet about baseline paths follows.
+  Phase 1 known gap 2 (Unicode tables) is closed by D14.

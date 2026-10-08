@@ -434,12 +434,18 @@ def test_containment_needs_absolute_paths_of_one_flavour() -> None:
         is_within(_win(r"C:\a"), _posix("/a"))
 
 
-# ---- record paths and display (PLAN.md D10 amendment) -------------------------------------------
+# ---- record paths (PLAN.md D14) and display (D10 amendment) -------------------------------------
 
 
-def test_record_path_escapes_each_component_and_joins_with_slash() -> None:
-    assert record_path(("docs", "a b", "x\ny", "back\\slash")) == "docs/a b/x\\x0ay/back\\\\slash"
+def test_record_path_keeps_each_component_exactly_and_joins_with_slash() -> None:
+    parts = ("docs", "a b", "x\ny", "back\\slash", "e" + chr(0x202E))
+    assert record_path(parts) == "docs/a b/x\ny/back\\slash/e" + chr(0x202E)
     assert record_path(()) == ""
+
+
+def test_record_path_does_not_escape_or_touch_lone_surrogates() -> None:
+    assert record_path(("a" + chr(0xDC80),)) == "a" + chr(0xDC80)
+    assert record_path(("\x1b[31m",)) == "\x1b[31m"
 
 
 @pytest.mark.parametrize("parts", [("",), (".",), ("..",), ("a", ""), ("a/b",)])
@@ -450,21 +456,34 @@ def test_record_path_refuses_bad_components(parts: tuple[str, ...]) -> None:
 
 def test_record_path_round_trips() -> None:
     rng = random.Random(42)
-    alphabet = ["a", "b", " ", "\\", "\x1b", chr(0x202E), "\u00e9", "\u65e5", chr(0xDC80), "x1b"]
+    alphabet = [
+        "a",
+        "b",
+        " ",
+        "\\",
+        "\x1b",
+        chr(0x202E),
+        chr(0xE9),
+        chr(0x65E5),
+        chr(0xDC80),
+        "x1b",
+    ]
     for _ in range(1000):
         parts = tuple(
             "n" + "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 6)))
             for _ in range(rng.randrange(0, 5))
         )
-        stored = record_path(parts)
-        assert "/" not in "".join(stored.split("/"))
-        assert split_record_path(stored) == parts
+        assert split_record_path(record_path(parts)) == parts
 
 
-@pytest.mark.parametrize("text", ["a//b", "/a", "a/", ".", "a/./b", "a/../b", "a\x1bb", "a\\x41"])
-def test_split_record_path_refuses_non_canonical_text(text: str) -> None:
+@pytest.mark.parametrize("text", ["a//b", "/a", "a/", ".", "a/./b", "a/../b"])
+def test_split_record_path_refuses_malformed_text(text: str) -> None:
     with pytest.raises(PathRuleError):
         split_record_path(text)
+
+
+def test_split_record_path_takes_raw_characters_because_storage_is_exact() -> None:
+    assert split_record_path("a\x1bb/c\\x41") == ("a\x1bb", "c\\x41")
 
 
 def test_windows_display_never_shows_doubled_backslashes() -> None:

@@ -1,9 +1,11 @@
 """The data model (PLAN.md section 2): frozen dataclasses and closed vocabularies.
 
 Every object checks its own invariants on creation and raises ModelError (never ``assert``), so
-a bug elsewhere cannot smuggle an inconsistent record into a baseline or a report. Text fields
-that come from the filesystem hold *escaped* text (core/sanitize.py); an unescaped dangerous
-character is a ModelError. Collections are tuples so the objects stay immutable.
+a bug elsewhere cannot smuggle an inconsistent record into a baseline or a report. A
+``FileRecord`` holds the exact path and link target as the filesystem reports them (PLAN.md D14);
+every other text field that can come from the filesystem (findings, issues, changes, evidence)
+holds *escaped* text (core/sanitize.py) and an unescaped dangerous character is a ModelError.
+Collections are tuples so the objects stay immutable.
 """
 
 from __future__ import annotations
@@ -13,9 +15,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from fim.core.errors import ModelError
+from fim.core.errors import ModelError, PathRuleError
 from fim.core.limits import MAX_EVIDENCE_CHARS_CEILING, MAX_FINDINGS_REPORTED_CEILING, Limits
-from fim.core.pathrules import UserPath
+from fim.core.pathrules import UserPath, split_record_path
 from fim.core.sanitize import clip_escaped, first_unsafe
 
 __all__ = [
@@ -144,6 +146,12 @@ def _safe_text(owner: str, name: str, value: str | None) -> None:
         raise ModelError(f"{owner}.{name} holds a character that was not escaped")
 
 
+def _record_text(owner: str, name: str, value: str | None) -> None:
+    """Exact filesystem text: any characters at all, lone surrogates included."""
+    if value is not None and not isinstance(value, str):
+        raise ModelError(f"{owner}.{name} must be text")
+
+
 def _non_negative(owner: str, name: str, value: int | None) -> None:
     if value is None:
         return
@@ -178,7 +186,11 @@ _NO_HASH_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FileRecord:
-    """What was observed about one path. ``path`` is root-relative, "/"-separated, escaped."""
+    """What was observed about one path.
+
+    ``path`` is root-relative, "/"-separated and exact (not escaped; "" is the root itself), and
+    so is ``link_target``. Both are serialised by canonical JSON and escaped only for display.
+    """
 
     path: str
     root_index: int
@@ -198,9 +210,13 @@ class FileRecord:
 
     def __post_init__(self) -> None:
         owner = "FileRecord"
-        _safe_text(owner, "path", self.path)
-        _safe_text(owner, "link_target", self.link_target)
+        _record_text(owner, "path", self.path)
+        _record_text(owner, "link_target", self.link_target)
         _safe_text(owner, "error", self.error)
+        try:
+            split_record_path(self.path)  # "" is the root; no empty, "." or ".." component
+        except PathRuleError:
+            raise ModelError("FileRecord.path is not a valid record path") from None
         for name in ("root_index", "size", "nlink", "uid", "gid", "mode", "win_attrs"):
             _non_negative(owner, name, getattr(self, name))
         if self.mode is not None and self.mode > _MAX_MODE:

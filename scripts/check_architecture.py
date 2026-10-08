@@ -84,6 +84,7 @@ LAYERS: Mapping[str, int] = {
 # Same-layer imports that are allowed, keyed by the importing module. Everything not listed is a
 # violation (A002). Phases that add modules extend this table with the edges they need.
 SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
+    "fim.core.canonical": frozenset({"fim.core.errors"}),
     "fim.core.errors": frozenset({"fim.core.sanitize"}),
     "fim.core.limits": frozenset({"fim.core.errors"}),
     "fim.core.models": frozenset(

@@ -196,14 +196,11 @@ def test_a_valid_record_and_directory_build() -> None:
         },  # a file is always hashed or has a reason
         {"link_target": "x"},  # only symlinks have targets
         {"reparse_tag": 5},  # only reparse points and symlinks
-        {"path": "a\nb"},  # raw newline
-        {"path": "a" + chr(0x202E) + "b"},
-        {
-            "link_target": "\x1b",
-            "type": EntryType.SYMLINK,
-            "hash_status": HashStatus.NOT_APPLICABLE,
-            "sha256": None,
-        },
+        {"path": "a//b"},  # empty component
+        {"path": "/abs"},
+        {"path": "a/../b"},
+        {"path": "."},
+        {"path": 5},
         {"error": "bad\x00"},
     ],
 )
@@ -254,13 +251,40 @@ def test_windows_attributes_without_posix_mode() -> None:
     assert (record.mode, record.win_attrs) == (None, 0x01)
 
 
-def test_a_raw_backslash_in_an_escaped_path_is_fine_because_escape_doubles_it() -> None:
-    assert make.record(path="dir/a\\\\b").path == "dir/a\\\\b"
+def test_a_record_holds_the_exact_path_not_an_escaped_one() -> None:
+    hostile = "dir/a\\b/\x1b[31m\n" + chr(0x202E) + chr(0xDC80)
+    record = make.record(path=hostile)
+    assert record.path == hostile  # D14: storage is exact, display escapes
+
+
+def test_the_root_itself_has_the_empty_record_path() -> None:
+    assert make.directory(path="").path == ""
+
+
+def test_a_link_target_is_exact_text_too() -> None:
+    target = "../x\x1b" + chr(0xDC81)
+    link = make.record(
+        type=EntryType.SYMLINK,
+        link_target=target,
+        hash_status=HashStatus.NOT_APPLICABLE,
+        sha256=None,
+    )
+    assert link.link_target == target
+    with pytest.raises(ModelError, match="must be text"):
+        make.record(
+            type=EntryType.SYMLINK,
+            link_target=5,
+            hash_status=HashStatus.NOT_APPLICABLE,
+            sha256=None,
+        )
 
 
 def test_record_error_messages_never_echo_the_hostile_value() -> None:
     with pytest.raises(ModelError) as raised:
-        make.record(path="evil\x1b[31m")
+        make.record(path="evil\x1b[31m//x")
+    assert "\x1b" not in str(raised.value)
+    with pytest.raises(ModelError) as raised:
+        make.record(error="evil\x1b[31m")
     assert "\x1b" not in str(raised.value)
 
 
