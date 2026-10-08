@@ -93,6 +93,16 @@ SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     ),
     "fim.core.pathrules": frozenset({"fim.core.errors", "fim.core.limits", "fim.core.sanitize"}),
     "fim.core.perms": frozenset({"fim.core.errors", "fim.core.models"}),
+    "fim.core.policy": frozenset(
+        {
+            "fim.core.canonical",
+            "fim.core.errors",
+            "fim.core.globs",
+            "fim.core.limits",
+            "fim.core.models",
+            "fim.core.pathrules",
+        }
+    ),
 }
 
 # module -> the only modules that may import it (A013).

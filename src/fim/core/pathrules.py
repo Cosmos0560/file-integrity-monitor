@@ -31,6 +31,7 @@ __all__ = [
     "Flavour",
     "UserPath",
     "display_path",
+    "expand_tilde",
     "is_reserved_windows_name",
     "is_within",
     "record_path",
@@ -276,3 +277,14 @@ def display_path(root: UserPath, record: str) -> str:
         return base
     tail = root.sep.join(escape(part) for part in split_record_path(record))
     return base + tail if base.endswith(root.sep) else base + root.sep + tail
+
+
+def expand_tilde(path: UserPath, home: UserPath) -> UserPath:
+    """Replace a leading ``~`` with the absolute ``home`` directory (given by the caller)."""
+    if not path.tilde:
+        raise PathRuleError("the path does not start with '~'")
+    if not home.absolute or home.tilde:
+        raise PathRuleError("the home directory must be an absolute path")
+    if home.flavour is not path.flavour:
+        raise PathRuleError("the home directory uses a different path flavour")
+    return UserPath(path.flavour, home.drive, True, False, home.parts + path.parts)
