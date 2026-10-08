@@ -563,10 +563,13 @@ report written. Tagging and pushing are yours.
   with Python 3.13 explicitly. Consistency edits following from the D3 amendment: Phase 3 scope,
   Phase 6 Limitations list and the threat-model rollback row now describe the anchor and its
   residual risk instead of "rollback undetectable".
-- v0.2.1 (2026-10-08): Phase 1 implementation notes, deviations recorded for your acceptance (details
-  in docs/phase-reports.md): D10 escaping also covers lone surrogates outside U+DC80..U+DCFF;
+- v0.2.1 (2026-10-08): Phase 1 implementation notes, deviations ACCEPTED by the owner on 2026-10-08
+  (details in docs/phase-reports.md): D10 escaping also covers lone surrogates outside U+DC80..U+DCFF;
   `..` refused in every user-supplied path; the architecture checker bans a little more than
   CLAUDE.md lists (ctypes, builtins, sys.modules, `.open()` outside fs/, more archive and
   database modules outside fs/, literal os.open flags in observe.py); .gitattributes pins LF;
   exit-code precedence and the validated Limits dataclass were built in Phase 1; the pytest path
   guard for fs/ modules is deferred to Phases 2 and 3 because those modules do not exist yet.
+- v0.2.1 acceptance (2026-10-08): the owner accepted every deviation listed in v0.2.1 above
+  (items 1-9 of the Phase 1 report). The pytest path guard for fs/ modules is built with
+  fs/observe.py in Phase 2 and fs/safe_files.py in Phase 3.
