@@ -83,8 +83,9 @@ extend-exclude = [".venv"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF", "S", "T20", "N", "A", "ARG", "PIE", "TID"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests assert, build throwaway data and run git/python subprocesses on purpose.
-"tests/**" = ["S101", "S603", "S607", "S105", "S106", "ARG001", "ARG002"]
+# Tests assert, build throwaway data and run git/python subprocesses on purpose. S311: tests use
+# seeded random.Random for reproducible data (CLAUDE.md section 6), never for security.
+"tests/**" = ["S101", "S603", "S607", "S105", "S106", "S311", "ARG001", "ARG002"]
 # The scripts are developer tooling: they print and run tools through subprocess.
 "scripts/**" = ["T201", "S603"]
 # The CLI is the one place that prints (architecture rule).
