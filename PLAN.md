@@ -602,3 +602,6 @@ report written. Tagging and pushing are yours.
   by canonical JSON with `ensure_ascii=True`; the sanitiser is display-only. D10 amended to match
   (the "escaped storage" reasoning is withdrawn) and the D3 bullet about baseline paths follows.
   Phase 1 known gap 2 (Unicode tables) is closed by D14.
+- v0.3.1 (2026-10-08): dev tools are pinned to compatible ranges in pyproject.toml (pytest and
+  pytest-cov to one major, ruff and mypy to one minor series, types-PyYAML to one major), so CI
+  cannot break without a code change (Phase 1 known gap 5). A test holds the pins.

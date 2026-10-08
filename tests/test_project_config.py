@@ -32,6 +32,27 @@ def test_dev_extras_are_the_approved_tools(pyproject: dict[str, Any]) -> None:
     assert names == {"pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML"}
 
 
+def test_every_dev_tool_has_a_lower_and_an_upper_bound(pyproject: dict[str, Any]) -> None:
+    """Known gap 5: an unpinned linter or type checker can break CI without a code change."""
+    for spec in pyproject["project"]["optional-dependencies"]["dev"]:
+        assert re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*>=[0-9][0-9.]*,<[0-9][0-9.]*", spec), spec
+
+
+def test_ruff_and_mypy_are_pinned_to_one_minor_series(pyproject: dict[str, Any]) -> None:
+    # Both ship rule or behaviour changes in minor releases; the others only in majors.
+    specs = {
+        re.split(r"[<>=]", spec, maxsplit=1)[0]: spec
+        for spec in pyproject["project"]["optional-dependencies"]["dev"]
+    }
+    for tool in ("ruff", "mypy"):
+        lower = re.search(r">=(\d+)\.(\d+)", specs[tool])
+        upper = re.search(r"<(\d+)\.(\d+)", specs[tool])
+        assert lower is not None
+        assert upper is not None
+        assert upper.group(1) == lower.group(1)
+        assert int(upper.group(2)) == int(lower.group(2)) + 1
+
+
 def test_release_only_tools_are_not_in_the_dev_extras(pyproject: dict[str, Any]) -> None:
     extras = pyproject["project"]["optional-dependencies"]
     assert set(extras["release"]) == {"build", "pip-audit", "bandit"}
