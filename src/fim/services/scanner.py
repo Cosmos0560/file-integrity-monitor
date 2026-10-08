@@ -450,7 +450,7 @@ class _Scan:
             self.issue(IssueKind.UNREADABLE, shown, result.detail + suffix)
         elif status is HashStatus.UNSTABLE:
             self.issue(IssueKind.UNSTABLE, shown, result.detail)
-        elif status is HashStatus.VANISHED:
+        else:  # VANISHED: hashing never returns the other statuses
             self.issue(IssueKind.VANISHED, shown, result.detail)
 
     # -- the whole run -------------------------------------------------------------------------
