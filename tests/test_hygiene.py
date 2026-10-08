@@ -63,6 +63,16 @@ def test_no_key_baseline_or_secret_file_is_tracked_or_visible(repo_files: list[s
 
 
 @pytest.mark.requires_git
+def test_no_log_file_is_tracked_or_visible(repo_files: list[str]) -> None:
+    assert hygiene.find_log_files(repo_files) == []
+
+
+def test_log_files_are_found_by_name_in_any_directory() -> None:
+    found = hygiene.find_log_files(["gate-full.log", "a/b/Run.LOG", "a/log.txt", "logs/readme.md"])
+    assert found == ["gate-full.log: log file", "a/b/Run.LOG: log file"]
+
+
+@pytest.mark.requires_git
 def test_commit_messages_have_no_email_addresses() -> None:
     messages = hygiene.commit_messages(REPO_ROOT)
     assert hygiene.find_emails(messages) == []
@@ -81,6 +91,7 @@ def test_gitignore_lists_the_secret_and_environment_patterns() -> None:
         ".env*",
         ".venv/",
         "*.baseline*",
+        "*.log",
     ):
         assert expected in patterns, expected
 

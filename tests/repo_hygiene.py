@@ -111,6 +111,11 @@ def secret_header_kind(head: bytes) -> str | None:
     return None
 
 
+def find_log_files(files: Iterable[str]) -> list[str]:
+    """Log files (``scripts/gate.py --log`` writes them) never belong in the repository."""
+    return [f"{name}: log file" for name in files if name.lower().endswith(".log")]
+
+
 def find_secret_files(root: Path, files: Iterable[str]) -> list[str]:
     """Files that must never be tracked: secret names, fim key files, fim baselines."""
     problems: list[str] = []
