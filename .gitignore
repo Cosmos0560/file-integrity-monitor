@@ -25,5 +25,4 @@ dist/
 *.pfx
 id_rsa*
 .env*
-*.baseline
-*.baseline.*
+*.baseline*
