@@ -98,7 +98,14 @@ def test_pytest_is_strict_and_every_marker_is_declared(pyproject: dict[str, Any]
     assert "-ra" in options["addopts"]  # skips and failures are listed, so skips are visible
     assert options["filterwarnings"] == ["error"]
     declared = {marker.split(":", 1)[0] for marker in options["markers"]}
-    assert declared == {"slow", "requires_symlinks", "requires_git", "posix_only", "windows_only"}
+    assert declared == {
+        "slow",
+        "requires_symlinks",
+        "requires_git",
+        "posix_only",
+        "windows_only",
+        "requires_non_root",
+    }
 
 
 def test_mypy_is_strict_for_the_oldest_supported_python(pyproject: dict[str, Any]) -> None:

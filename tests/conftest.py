@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+import path_guard
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Every variable a tool could use to find the real home or config directories.
@@ -34,6 +36,16 @@ def isolated_environment(
         directory.mkdir()
         monkeypatch.setenv(name, str(directory))
     return fake_home
+
+
+@pytest.fixture(autouse=True)
+def fs_path_guard(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Make fs/observe.py and fs/safe_files.py refuse paths outside the pytest temp base."""
+    base = tmp_path_factory.getbasetemp()
+    for module in path_guard.load_guarded_modules():
+        path_guard.install_guard(monkeypatch, module, base)
 
 
 @cache
@@ -65,8 +77,18 @@ def git_available() -> bool:
     return probe.returncode == 0 and probe.stdout.strip() == "true"
 
 
+def running_as_root() -> bool:
+    """True for a POSIX superuser, who is not stopped by file permissions."""
+    return sys.platform != "win32" and os.geteuid() == 0
+
+
 def skip_reason(
-    marker_names: Iterable[str], *, platform: str, symlinks: bool, git: bool
+    marker_names: Iterable[str],
+    *,
+    platform: str,
+    symlinks: bool,
+    git: bool,
+    root: bool = False,
 ) -> str | None:
     """Return why a test with these markers must be skipped here, or None to run it."""
     names = set(marker_names)
@@ -78,18 +100,22 @@ def skip_reason(
         return "requires_symlinks: this process cannot create symlinks"
     if "requires_git" in names and not git:
         return "requires_git: git or a git work tree is not available"
+    if "requires_non_root" in names and root:
+        return "requires_non_root: the superuser ignores file permissions"
     return None
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
     names = [marker.name for marker in item.iter_markers()]
-    if not {"windows_only", "posix_only", "requires_symlinks", "requires_git"} & set(names):
+    gated = {"windows_only", "posix_only", "requires_symlinks", "requires_git", "requires_non_root"}
+    if not gated & set(names):
         return
     reason = skip_reason(
         names,
         platform=sys.platform,
         symlinks=symlinks_supported() if "requires_symlinks" in names else True,
         git=git_available() if "requires_git" in names else True,
+        root=running_as_root() if "requires_non_root" in names else False,
     )
     if reason is not None:
         pytest.skip(reason)

@@ -230,6 +230,7 @@ def test_many_double_stars_across_segments_finish() -> None:
     assert match(pattern, "/".join(["a"] * 99)) is False
 
 
+@pytest.mark.slow
 def test_a_maximum_size_pattern_against_a_maximum_size_name() -> None:
     pattern = "*a" * 255 + "b"  # 511 characters, the pattern limit is 512
     assert match(pattern, "a" * 4096) is False

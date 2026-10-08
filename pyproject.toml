@@ -60,6 +60,7 @@ markers = [
     "requires_git: needs the git executable and a git work tree",
     "posix_only: only meaningful on POSIX systems",
     "windows_only: only meaningful on Windows",
+    "requires_non_root: needs a non-root user, because the superuser ignores file permissions",
 ]
 
 [tool.coverage.run]
