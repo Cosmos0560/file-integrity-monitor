@@ -39,3 +39,16 @@ class FakeSleeper:
             raise ValueError("cannot sleep for a negative time")
         self.sleeps.append(seconds)
         self._clock.advance(seconds)
+
+
+class TickingClock(FakeClock):
+    """A clock whose monotonic reading advances by ``step`` seconds every time it is read."""
+
+    def __init__(self, step: float) -> None:
+        super().__init__()
+        self.step = step
+
+    def monotonic(self) -> float:
+        reading = super().monotonic()
+        self.advance(self.step)
+        return reading
