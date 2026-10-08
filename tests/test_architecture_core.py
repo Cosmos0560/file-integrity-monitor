@@ -187,7 +187,7 @@ def test_import_of_a_name_inside_an_existing_module_is_not_a_missing_module(
 
 
 def test_external_imports_are_not_internal_resolution_errors(tmp_path: Path) -> None:
-    assert check(tmp_path, {"core/limits.py": "import json\nimport yaml\n"}) == []
+    assert check(tmp_path, {"core/limits.py": "import json\nimport hmac\n"}) == []
 
 
 # ---- A005 and A014: fail closed -------------------------------------------------------------

@@ -375,6 +375,457 @@ def check_cycles(tree: Tree, edges: list[ImportEdge]) -> list[Violation]:
     return violations
 
 
+# ---- usage rules: what a module may call, not only what it may import ----------------------
+
+# The only modules that touch the filesystem. observe.py reads monitored files, safe_files.py
+# reads and writes the tool's own files, sandbox.py mutates the demo's temporary tree.
+FS_MODULES = frozenset({"fim.fs.observe", "fim.fs.safe_files", "fim.fs.sandbox"})
+OBSERVE_MODULE = "fim.fs.observe"
+CLOCK_MODULE = "fim.platform.clock"
+CONFIG_MODULE = "fim.services.config"
+
+# Importing these outside FS_MODULES is a filesystem access (A006).
+FS_BANNED_MODULES = frozenset(
+    {
+        "pathlib",
+        "shutil",
+        "tempfile",
+        "glob",
+        "fileinput",
+        "zipfile",
+        "tarfile",
+        "gzip",
+        "bz2",
+        "lzma",
+        "sqlite3",
+        "dbm",
+        "mmap",
+        "linecache",
+    }
+)
+# Core is pure: besides the filesystem modules it may not even import os or sys (A015).
+CORE_BANNED_MODULES = FS_BANNED_MODULES | {"os", "sys"}
+# io.StringIO is memory only and allowed; the file-opening parts of io are not.
+IO_BANNED_ATTRS = frozenset({"open", "open_code", "FileIO"})
+
+BANNED_MODULES = frozenset(
+    {
+        "subprocess",
+        "socket",
+        "urllib",
+        "http",
+        "pickle",
+        "marshal",
+        "shelve",
+        "random",
+        "importlib",
+        "ctypes",
+        "builtins",
+    }
+)
+BANNED_BUILTINS = frozenset({"eval", "exec", "__import__"})
+YAML_BANNED_ATTRS = frozenset(
+    {
+        "load",
+        "load_all",
+        "unsafe_load",
+        "unsafe_load_all",
+        "full_load",
+        "full_load_all",
+        "Loader",
+        "UnsafeLoader",
+        "FullLoader",
+        "CLoader",
+        "CUnsafeLoader",
+        "CFullLoader",
+    }
+)
+ALLOWED_THIRD_PARTY = {"yaml": frozenset({CONFIG_MODULE})}
+
+# Outside FS_MODULES only these `os` names are allowed (no file functions).
+OS_SAFE_ATTRS = frozenset(
+    {
+        "sep",
+        "altsep",
+        "extsep",
+        "linesep",
+        "pathsep",
+        "curdir",
+        "pardir",
+        "devnull",
+        "fspath",
+        "fsencode",
+        "fsdecode",
+        "PathLike",
+        "environ",
+        "getenv",
+        "getpid",
+        "strerror",
+        "cpu_count",
+        "name",
+        "error",
+    }
+)
+OS_PATH_SAFE_ATTRS = frozenset(
+    {
+        "join",
+        "basename",
+        "dirname",
+        "split",
+        "splitext",
+        "splitdrive",
+        "normpath",
+        "normcase",
+        "isabs",
+        "sep",
+        "altsep",
+        "expanduser",
+        "commonpath",
+        "commonprefix",
+    }
+)
+# Starting or signalling processes is banned everywhere, fs/ included.
+OS_ALWAYS_BANNED = frozenset(
+    {
+        "system",
+        "popen",
+        "execl",
+        "execle",
+        "execlp",
+        "execlpe",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "spawnl",
+        "spawnle",
+        "spawnlp",
+        "spawnlpe",
+        "spawnv",
+        "spawnve",
+        "spawnvp",
+        "spawnvpe",
+        "posix_spawn",
+        "posix_spawnp",
+        "fork",
+        "forkpty",
+        "kill",
+        "killpg",
+        "startfile",
+        "abort",
+        "_exit",
+    }
+)
+# observe.py must contain no write or mutate API and no write open flags (A007).
+OBSERVE_BANNED_OS = frozenset(
+    {
+        "write",
+        "writev",
+        "pwrite",
+        "pwritev",
+        "remove",
+        "unlink",
+        "rename",
+        "renames",
+        "replace",
+        "mkdir",
+        "makedirs",
+        "rmdir",
+        "removedirs",
+        "chmod",
+        "lchmod",
+        "fchmod",
+        "chown",
+        "lchown",
+        "fchown",
+        "chflags",
+        "lchflags",
+        "utime",
+        "truncate",
+        "ftruncate",
+        "link",
+        "symlink",
+        "fsync",
+        "fdatasync",
+        "mkfifo",
+        "mknod",
+        "sendfile",
+        "copy_file_range",
+        "lockf",
+        "setxattr",
+        "removexattr",
+    }
+)
+OBSERVE_READ_FLAGS = frozenset(
+    {
+        "O_RDONLY",
+        "O_NOFOLLOW",
+        "O_NONBLOCK",
+        "O_CLOEXEC",
+        "O_NOATIME",
+        "O_BINARY",
+        "O_DIRECTORY",
+        "O_NOCTTY",
+        "O_NOINHERIT",
+        "O_SEQUENTIAL",
+        "O_RANDOM",
+        "O_LARGEFILE",
+    }
+)
+# Method names that mutate, whatever the receiver is (a pathlib object, a file object).
+OBSERVE_BANNED_METHODS = frozenset(
+    {
+        "write",
+        "writelines",
+        "write_text",
+        "write_bytes",
+        "truncate",
+        "mkdir",
+        "unlink",
+        "rmdir",
+        "rename",
+        "touch",
+        "chmod",
+        "chown",
+        "symlink_to",
+        "hardlink_to",
+    }
+)
+CLOCK_CALLS = frozenset(
+    {
+        "datetime.datetime.now",
+        "datetime.datetime.utcnow",
+        "datetime.datetime.today",
+        "datetime.date.today",
+    }
+)
+
+
+def _dotted(parts: Sequence[str]) -> str:
+    return ".".join(parts)
+
+
+def _chain(node: ast.AST) -> list[str] | None:
+    """The names of ``a.b.c`` as ['a', 'b', 'c'], or None if the root is not a plain name."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return parts[::-1]
+    return None
+
+
+def build_aliases(tree: ast.Module) -> dict[str, str]:
+    """Map every imported local name to the dotted thing it refers to (any scope)."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:
+                    top = alias.name.split(".")[0]
+                    aliases[top] = top
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                if alias.name != "*":
+                    aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return aliases
+
+
+def _canonical(parts: Sequence[str], aliases: Mapping[str, str]) -> tuple[str, ...]:
+    head = aliases.get(parts[0])
+    if head is None:
+        return tuple(parts)
+    return (*head.split("."), *parts[1:])
+
+
+def _maximal_chains(tree: ast.Module) -> Iterator[tuple[list[str], int]]:
+    """Every attribute chain / bare name being read that is not the inside of a longer chain."""
+    inner = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute | ast.Name) or id(node) in inner:
+            continue
+        if not isinstance(node.ctx, ast.Load):
+            continue
+        parts = _chain(node)
+        if parts is not None:
+            yield parts, node.lineno
+
+
+class _UsageChecker:
+    """Applies the usage rules to one module."""
+
+    def __init__(self, module: ModuleInfo) -> None:
+        self.module = module
+        self.name = module.name
+        self.layer = LAYERS.get(module.name)
+        self.shown = module.path.as_posix()
+        self.is_fs = module.name in FS_MODULES
+        self.is_observe = module.name == OBSERVE_MODULE
+        self.is_core = self.layer == 0
+        self.is_cli = module.name == "fim.cli" or module.name.startswith("fim.cli.")
+        self.aliases = build_aliases(module.tree)
+        self.found: dict[tuple[str, int, str], Violation] = {}
+
+    def add(self, rule: str, line: int, message: str) -> None:
+        self.found.setdefault((rule, line, message), Violation(rule, self.shown, line, message))
+
+    # -- imports ------------------------------------------------------------------------------
+
+    def check_import(self, dotted: str, names: Sequence[str], line: int) -> None:
+        """``dotted`` is the imported module; ``names`` the names taken from it (from-import)."""
+        top = dotted.split(".")[0]
+        if top == PACKAGE:
+            return
+        if top in BANNED_MODULES:
+            self.add("A010", line, f"import of banned module '{top}'")
+        if top in CORE_BANNED_MODULES and self.is_core:
+            self.add("A015", line, f"core must stay pure: it may not import '{top}'")
+        elif top in FS_BANNED_MODULES and not self.is_fs:
+            self.add("A006", line, f"filesystem module '{top}' is only allowed in fs/")
+        elif top in FS_BANNED_MODULES and self.is_observe and top in {"shutil", "tempfile"}:
+            self.add("A007", line, f"observe.py may not import '{top}'")
+        if top == "time" and self.name != CLOCK_MODULE:
+            self.add("A008", line, "the time module is only allowed in platform/clock.py")
+        if top not in sys.stdlib_module_names:
+            allowed = ALLOWED_THIRD_PARTY.get(top)
+            if allowed is None or self.name not in allowed:
+                self.add("A009", line, f"third-party import '{top}' is not allowed here")
+        if dotted == "io" or dotted.startswith("io."):
+            for name in names:
+                if name in IO_BANNED_ATTRS and not self.is_fs:
+                    self.add("A006", line, f"io.{name} opens files; only fs/ may do that")
+        if top == "os":
+            for name in names:
+                self.check_os_name(dotted, name, line)
+        if top == "yaml":
+            for name in names:
+                if name in YAML_BANNED_ATTRS:
+                    self.add("A010", line, f"yaml.{name} is unsafe; use a SafeLoader subclass")
+        if top == "sys" and "modules" in names:
+            self.add("A010", line, "sys.modules is banned")
+
+    def check_os_name(self, module: str, name: str, line: int) -> None:
+        """A name taken from ``os`` or ``os.path`` (from-import or attribute access)."""
+        if module == "os":
+            self.check_os_attr(name, None, line)
+        elif (
+            module == "os.path"
+            and not self.is_fs
+            and not self.is_core
+            and name not in OS_PATH_SAFE_ATTRS
+        ):
+            self.add("A006", line, f"os.path.{name} touches the filesystem")
+
+    def check_os_attr(self, attr: str, sub: str | None, line: int) -> None:
+        if attr in OS_ALWAYS_BANNED:
+            self.add("A010", line, f"os.{attr} starts or signals a process")
+            return
+        if self.is_observe:
+            if attr in OBSERVE_BANNED_OS:
+                self.add("A007", line, f"observe.py may not use os.{attr}")
+            elif attr.startswith("O_") and attr not in OBSERVE_READ_FLAGS:
+                self.add("A007", line, f"observe.py may not use the open flag os.{attr}")
+            return
+        if self.is_fs or self.is_core:
+            return  # core is reported once, at its import (A015)
+        if attr == "path":
+            if sub is not None and sub not in OS_PATH_SAFE_ATTRS:
+                self.add("A006", line, f"os.path.{sub} touches the filesystem")
+        elif attr not in OS_SAFE_ATTRS:
+            self.add("A006", line, f"os.{attr} is a filesystem or process API; only fs/ may use it")
+
+    # -- the whole module ---------------------------------------------------------------------
+
+    def run(self) -> list[Violation]:
+        tree = self.module.tree
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.check_import(alias.name, [], node.lineno)
+            elif isinstance(node, ast.ImportFrom):
+                if any(alias.name == "*" for alias in node.names):
+                    self.add("A010", node.lineno, "star imports are banned")
+                if node.module and not node.level:
+                    self.check_import(node.module, [a.name for a in node.names], node.lineno)
+            elif isinstance(node, ast.Assert):
+                self.add("A011", node.lineno, "assert is banned in src/; raise an explicit error")
+            elif isinstance(node, ast.Call):
+                self.check_call(node)
+            elif (
+                isinstance(node, ast.Attribute)
+                and self.is_observe
+                and node.attr in OBSERVE_BANNED_METHODS
+            ):
+                self.add("A007", node.lineno, f"observe.py may not use '.{node.attr}'")
+        for parts, line in _maximal_chains(tree):
+            self.check_chain(_canonical(parts, self.aliases), parts, line)
+        return list(self.found.values())
+
+    def check_chain(self, canon: tuple[str, ...], raw: Sequence[str], line: int) -> None:
+        dotted = _dotted(canon)
+        head = canon[0]
+        if canon == ("print",) and raw[0] == "print" and not self.is_cli:
+            self.add("A012", line, "print is only allowed in cli/")
+        if canon[:2] in {("sys", "stdout"), ("sys", "stderr")} and not self.is_cli:
+            self.add("A012", line, "writing to sys.stdout/sys.stderr is only allowed in cli/")
+        if canon == ("sys", "modules"):
+            self.add("A010", line, "sys.modules is banned")
+        if len(canon) == 1 and head in BANNED_BUILTINS and raw[0] == head:
+            self.add("A010", line, f"{head}() is banned")
+        if canon == ("open",) and raw == ["open"]:
+            if self.is_observe:
+                self.add("A007", line, "observe.py may not call open(); use os.open read-only")
+            elif not self.is_fs:
+                self.add("A006", line, "open() is only allowed in fs/")
+        if head == "os" and len(canon) >= 2:
+            self.check_os_attr(canon[1], canon[2] if len(canon) > 2 else None, line)
+        if head == "io" and len(canon) >= 2 and canon[1] in IO_BANNED_ATTRS and not self.is_fs:
+            self.add("A006", line, f"io.{canon[1]} opens files; only fs/ may do that")
+        if head == "yaml" and len(canon) >= 2 and canon[1] in YAML_BANNED_ATTRS:
+            self.add("A010", line, f"yaml.{canon[1]} is unsafe; use a SafeLoader subclass")
+        if dotted in CLOCK_CALLS and self.name != CLOCK_MODULE:
+            self.add("A008", line, f"{dotted} reads the clock; inject a Clock instead")
+
+    def check_call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "open" and not self.is_fs:
+            self.add("A006", node.lineno, "'.open()' is only allowed in fs/")
+        if isinstance(func, ast.Name) and func.id == "getattr" and node.args:
+            parts = _chain(node.args[0])
+            if parts is None or _canonical(parts, self.aliases) not in {("os",), ("os", "path")}:
+                return
+            attr = node.args[1] if len(node.args) > 1 else None
+            if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
+                self.check_os_attr(attr.value, None, node.lineno)
+            elif self.is_observe:
+                self.add("A007", node.lineno, "observe.py may not look up os names dynamically")
+            elif not self.is_fs:
+                self.add("A006", node.lineno, "dynamic getattr on os is only allowed in fs/")
+        if self.is_observe:
+            parts = _chain(func)
+            if parts is not None and _canonical(parts, self.aliases) == ("os", "open"):
+                flags = node.args[1] if len(node.args) > 1 else None
+                if flags is None:
+                    flags = next((k.value for k in node.keywords if k.arg == "flags"), None)
+                if flags is None or any(
+                    isinstance(sub, ast.Constant) and isinstance(sub.value, int)
+                    for sub in ast.walk(flags)
+                ):
+                    self.add("A007", node.lineno, "os.open flags must be named read-only constants")
+
+
+def check_usage(tree: Tree) -> list[Violation]:
+    """A006-A012 and A015 for every module."""
+    violations: list[Violation] = []
+    for module in tree.modules.values():
+        violations.extend(_UsageChecker(module).run())
+    return violations
+
+
 def run_checks(src: Path) -> tuple[list[Violation], int]:
     """Run every rule against ``src``; return the sorted violations and the module count."""
     tree = load_tree(src)
@@ -384,6 +835,7 @@ def run_checks(src: Path) -> tuple[list[Violation], int]:
     violations.extend(check_layers(tree, edges))
     violations.extend(check_restricted(tree, edges))
     violations.extend(check_cycles(tree, edges))
+    violations.extend(check_usage(tree))
     ordered = sorted(violations, key=lambda v: (v.path, v.line, v.rule, v.message))
     return ordered, len(tree.modules)
 
