@@ -86,7 +86,9 @@ LAYERS: Mapping[str, int] = {
 SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     "fim.core.errors": frozenset({"fim.core.sanitize"}),
     "fim.core.limits": frozenset({"fim.core.errors"}),
-    "fim.core.models": frozenset({"fim.core.limits"}),
+    "fim.core.models": frozenset(
+        {"fim.core.errors", "fim.core.limits", "fim.core.pathrules", "fim.core.sanitize"}
+    ),
     "fim.core.pathrules": frozenset({"fim.core.errors", "fim.core.limits", "fim.core.sanitize"}),
 }
 
