@@ -605,3 +605,23 @@ report written. Tagging and pushing are yours.
 - v0.3.1 (2026-10-08): dev tools are pinned to compatible ranges in pyproject.toml (pytest and
   pytest-cov to one major, ruff and mypy to one minor series, types-PyYAML to one major), so CI
   cannot break without a code change (Phase 1 known gap 5). A test holds the pins.
+- v0.3.2 (2026-10-08): Phase 2 implementation notes, deviations recorded for your acceptance
+  (details in docs/phase-reports.md): (1) core/canonical.py (canonical JSON, needed by D14 and
+  the policy digest) and the policy digest in core/policy.py were built in Phase 2, with
+  canonical.py refusing floats and non-text keys; (2) Windows FILE_ATTRIBUTE_RECALL_ON_OPEN
+  counts as offline together with OFFLINE and RECALL_ON_DATA_ACCESS, because opening such a file
+  also downloads it; (3) glob clarifications to section 1.6: a trailing "**" matches the
+  directory itself, "[...]" is the only way to match a metacharacter, patterns with a leading or
+  trailing "/" or a backslash are refused, include applies to non-directory entries only
+  (directories are always recorded and walked unless excluded), and max_patterns counts all
+  patterns of the configuration together; (4) the configuration loader takes the config bytes,
+  because reading the file belongs to fs/safe_files.py (Phase 3), and it already refuses a
+  key_file inside a monitored root; (5) a configured root that is a symlink, junction or other
+  reparse point is a root_unavailable scan issue with the "configure the real path" hint instead
+  of an exception, so Phase 3 must make `baseline` refuse while a root_unavailable issue exists;
+  (6) the scanner reads the filesystem through a small FileSystemView interface (default:
+  fs/observe.py), so every branch is tested on a virtual tree on every OS; (7) a directory
+  record keeps mode, uid and gid but size 0 and nlink 1, so directory churn is not a finding;
+  (8) a directory reached twice (same device and inode) is entered once and marks the run
+  incomplete; (9) a pytest marker `requires_non_root` was added next to the three named in
+  CLAUDE.md, for chmod-based tests that the superuser would pass for the wrong reason.
