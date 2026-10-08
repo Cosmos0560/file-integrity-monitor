@@ -415,3 +415,11 @@ def test_timezone_aware_non_utc_datetimes_are_refused_everywhere_utc_is_required
     with pytest.raises(ModelError):
         make.report(baseline_created_at=local)
     assert make.report(baseline_created_at=datetime(2026, 1, 1, tzinfo=UTC)).complete
+
+
+@pytest.mark.parametrize("bad", [5, b"bytes", ("a",), 1.5])
+def test_text_fields_refuse_values_that_are_not_text(bad: Any) -> None:
+    with pytest.raises(ModelError, match="must be text"):
+        make.record(path=bad)
+    with pytest.raises(ModelError, match="must be text"):
+        make.finding(evidence=bad)

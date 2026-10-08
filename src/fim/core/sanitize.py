@@ -25,6 +25,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Iterable
 from functools import lru_cache
+from itertools import accumulate
 
 __all__ = [
     "InvalidEscapeError",
@@ -125,15 +126,10 @@ def clip_escaped(text: str, limit: int) -> str:
     if limit < len(_ELLIPSIS) + 1:
         return _ELLIPSIS[: max(limit, 0)]
     budget = limit - len(_ELLIPSIS)
-    pieces: list[str] = []
-    used = 0
-    for char in text:
-        piece = "\\\\" if char == "\\" else (_sequence_for(char) or char)
-        if used + len(piece) > budget:
-            break
-        pieces.append(piece)
-        used += len(piece)
-    return "".join(pieces) + _ELLIPSIS
+    pieces = ["\\\\" if char == "\\" else (_sequence_for(char) or char) for char in text]
+    # Cumulative lengths only grow, so the pieces that fit are exactly a prefix.
+    keep = sum(1 for total in accumulate(len(piece) for piece in pieces) if total <= budget)
+    return "".join(pieces[:keep]) + _ELLIPSIS
 
 
 def _decode_escape(text: str, start: int) -> tuple[str, int]:
