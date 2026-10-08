@@ -85,6 +85,7 @@ LAYERS: Mapping[str, int] = {
 # violation (A002). Phases that add modules extend this table with the edges they need.
 SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     "fim.core.errors": frozenset({"fim.core.sanitize"}),
+    "fim.core.limits": frozenset({"fim.core.errors"}),
     "fim.core.models": frozenset({"fim.core.limits"}),
     "fim.core.pathrules": frozenset({"fim.core.errors", "fim.core.limits", "fim.core.sanitize"}),
 }
