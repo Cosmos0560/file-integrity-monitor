@@ -709,3 +709,22 @@ report written. Tagging and pushing are yours.
   the check after the scan stays for a root that vanishes mid-scan. A root that is a single
   regular file is still accepted (a scanner feature since Phase 2), which is wider than the
   owner's wording "is a directory".
+- v0.3.6 (2026-10-09): Phase 4 implementation notes, deviations recorded for your acceptance
+  (details in docs/phase-reports.md): (1) the choices PLAN.md D8 leaves open: `policy_drift` is a
+  `low` severity, `high` confidence notice, and it makes `check` exit 1; a missing file is reported
+  with `low` confidence (not `high`) when the scan was incomplete or a directory above it could not
+  be read, and a path whose own scan problem is reported (unreadable, vanished) is not also called
+  deleted; findings that carry a "possible rename" hint have `low` confidence on both sides, as
+  D8's list says; a link count change is only checked for regular files; directories are compared
+  by type and permissions only; (2) `fim check` takes `--baseline` (required), `--key-file` and
+  `--config` (both optional; `--config` only supplies the key location and the drift check, the
+  scan always uses the baseline's policy, D4), `--format table|json`, `--output`, `--force`,
+  `--min-severity`; the exit code follows what is shown (a finding hidden by `--min-severity` does
+  not make it exit 1), and a baseline that was itself made from an incomplete scan makes every
+  check exit 4 (`complete: false` plus a note), because it cannot prove the absence of changes;
+  (3) `--output` writes the rendered report atomically to a new file (mode 0600, refused inside a
+  monitored path, refused if it exists unless `--force`) and then prints one summary line; (4) the
+  JSON shape is documented in docs/report-schema.md (`fim-report/1`) and a test fails when the
+  document and the code disagree; (5) a key file inside one of the baseline's own monitored paths
+  is refused by `check` once the baseline is verified (the roots are only known then); (6) the
+  PreToolUse hook of Step 1a covers the Bash tool only, not the PowerShell tool.
