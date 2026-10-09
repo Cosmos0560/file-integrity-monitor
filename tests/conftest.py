@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from functools import cache
 from pathlib import Path
 
@@ -25,17 +25,35 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _HOME_VARIABLES = ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME")
 
 
+@pytest.fixture(scope="session")
+def fake_home_directories(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """One set of empty home and config directories for the whole run.
+
+    Creating and later deleting six directories per test was a measurable share of the gate time
+    on Windows (Defender scans every one); the directories are only ever pointed at, never used.
+    """
+    fake_home = tmp_path_factory.mktemp("fake-home")
+    directories = {name: fake_home / name.lower() for name in _HOME_VARIABLES}
+    for directory in directories.values():
+        directory.mkdir()
+    return directories
+
+
 @pytest.fixture(autouse=True)
 def isolated_environment(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Path:
-    """Point every home and config variable at a fresh temporary directory."""
-    fake_home = tmp_path_factory.mktemp("fake-home")
-    for name in _HOME_VARIABLES:
-        directory = fake_home / name.lower()
-        directory.mkdir()
+    fake_home_directories: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Path]:
+    """Point every home and config variable at an empty temporary directory.
+
+    A test that writes into one of them fails here, so the shared directories stay empty.
+    """
+    for name, directory in fake_home_directories.items():
         monkeypatch.setenv(name, str(directory))
-    return fake_home
+    yield next(iter(fake_home_directories.values())).parent
+    for directory in fake_home_directories.values():
+        leftovers = os.listdir(directory)
+        if leftovers:
+            raise AssertionError(f"a test wrote into the fake home {directory}: {leftovers}")
 
 
 @pytest.fixture(autouse=True)
