@@ -528,11 +528,14 @@ def decode_anchor(data: bytes, key: Key, baseline_id: str) -> Anchor:
     key_id, digest, mac = fields["key_id"], fields["payload_sha256"], fields["mac"]
     found_id = fields["baseline_id"]
     sequence_text = fields["sequence"]
-    if _HEX16.fullmatch(key_id) is None or _HEX16.fullmatch(found_id) is None:
-        raise _anchor_refusal("a field is malformed")
-    if _HEX64.fullmatch(digest) is None:
-        raise _anchor_refusal("a field is malformed")
-    if _HEX64.fullmatch(mac) is None or re.fullmatch(r"[1-9][0-9]{0,15}", sequence_text) is None:
+    well_formed = (
+        _HEX16.fullmatch(key_id) is not None
+        and _HEX16.fullmatch(found_id) is not None
+        and _HEX64.fullmatch(digest) is not None
+        and _HEX64.fullmatch(mac) is not None
+        and re.fullmatch(r"[1-9][0-9]{0,15}", sequence_text) is not None
+    )
+    if not well_formed:
         raise _anchor_refusal("a field is malformed")
     sequence = int(sequence_text)
     if sequence > _MAX_SEQUENCE:
