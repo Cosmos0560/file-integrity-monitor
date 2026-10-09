@@ -162,7 +162,7 @@ def test_baseline_with_a_missing_key_file_is_exit_2(
     assert not ws.baseline.exists()
 
 
-def test_baseline_that_hits_a_limit_exits_4_but_writes_the_baseline(
+def test_baseline_that_hits_a_limit_exits_4_and_writes_nothing(
     ws: Workspace, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cli.main(init_key_args(ws))
@@ -170,10 +170,33 @@ def test_baseline_that_hits_a_limit_exits_4_but_writes_the_baseline(
     capsys.readouterr()
     assert cli.main(baseline_args(ws)) == 4
     out, err = capsys.readouterr()
+    assert out == ""
+    assert "fim: error: the scan was incomplete" in err
+    assert "nothing was written" in err
+    assert "--allow-incomplete" in err
+    assert not ws.baseline.exists()
+    assert not (ws.keys / "fim.key.fim-anchor").exists()
+
+
+def test_baseline_allow_incomplete_writes_the_baseline_and_still_exits_4(
+    ws: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli.main(init_key_args(ws))
+    write_config(ws.config, [ws.watched], limits={"max_files": 3})
+    capsys.readouterr()
+    assert cli.main(baseline_args(ws, "--allow-incomplete")) == 4
+    out, err = capsys.readouterr()
     assert "  complete: no" in out
     assert "scan was incomplete" in err
     assert "limit_reached" in err
     assert ws.baseline.exists()
+
+
+def test_allow_incomplete_is_an_option_of_baseline_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["init-key", "--key-file", "x", "--allow-incomplete"]) == 2
+    assert "unrecognized arguments: --allow-incomplete" in capsys.readouterr().err
 
 
 def test_baseline_of_an_unavailable_path_is_exit_2(
@@ -314,6 +337,7 @@ def test_no_option_takes_a_key_value() -> None:
             "--config",
             "--force",
             "--baseline",
+            "--allow-incomplete",
         }
 
 

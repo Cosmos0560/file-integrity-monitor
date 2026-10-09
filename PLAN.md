@@ -676,3 +676,10 @@ report written. Tagging and pushing are yours.
   once per test (the default pytest run went from 22.5 s to 12.7 s on the development machine) and
   a teardown check fails any test that writes into them; `tests/data/golden_payload.json` pins
   the canonical payload bytes.
+- v0.3.5 (2026-10-09): the owner accepted all Phase 3 deviations of v0.3.4 except item (3), which
+  is changed: `fim baseline` on an incomplete scan (a limit or the time budget was hit) now writes
+  nothing, leaves an existing baseline and anchor untouched, and exits 4 with a message that names
+  the limit; `fim baseline --allow-incomplete` writes the baseline with `complete: false` in its
+  header, updates the anchor, and still exits 4. Items (1) one anchor per key and (8) no fallback
+  for file systems without hard links are accepted but then replaced by the owner's next two
+  decisions in this entry, below.

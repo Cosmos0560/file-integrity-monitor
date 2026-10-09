@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="key file (overrides key_file in the configuration)",
     )
     baseline.add_argument("--force", action="store_true", help="replace an existing baseline")
+    baseline.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="if a limit stops the scan, still write the baseline (marked incomplete, exit 4)",
+    )
     baseline.set_defaults(handler=_baseline)
     return parser
 
@@ -129,6 +134,7 @@ def _baseline(args: argparse.Namespace) -> int:
             baseline_path=args.baseline,
             key_file=args.key_file,
             force=args.force,
+            allow_incomplete=args.allow_incomplete,
         ),
         SystemClock(),
     )

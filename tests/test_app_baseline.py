@@ -287,18 +287,62 @@ def test_a_monitored_root_that_is_a_file_is_accepted(ws: Workspace) -> None:
 # ---- baseline: limits ----------------------------------------------------------------------------
 
 
-def test_a_scan_that_hits_a_limit_still_writes_a_baseline_marked_incomplete_with_exit_4(
+def test_a_scan_that_hits_a_limit_writes_nothing_and_is_exit_4(ws: Workspace) -> None:
+    make_key(ws)
+    write_config(ws.config, [ws.watched], limits={"max_files": 3})
+    with pytest.raises(LimitReachedError, match="scan was incomplete") as raised:
+        run(ws)
+    assert raised.value.exit_code == ExitCode.INCOMPLETE
+    assert "nothing was written" in raised.value.message
+    assert "--allow-incomplete" in raised.value.message
+    assert not ws.baseline.exists()
+    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert directory_names(ws.baseline.parent) == []
+
+
+def test_a_refused_incomplete_scan_leaves_an_existing_baseline_and_anchor_alone(
+    ws: Workspace,
+) -> None:
+    make_key(ws)
+    run(ws)
+    baseline_before = ws.baseline.read_bytes()
+    anchor_before = (ws.keys / "fim.key.fim-anchor").read_bytes()
+    write_config(ws.config, [ws.watched], limits={"max_files": 3})
+    with pytest.raises(LimitReachedError):
+        run(ws, force=True)
+    assert ws.baseline.read_bytes() == baseline_before
+    assert (ws.keys / "fim.key.fim-anchor").read_bytes() == anchor_before
+
+
+def test_the_time_budget_also_counts_as_incomplete(ws: Workspace) -> None:
+    from fakes import TickingClock
+
+    make_key(ws)
+    write_config(ws.config, [ws.watched], limits={"max_run_seconds": 1})
+    with pytest.raises(LimitReachedError, match="time budget"):
+        app.run_baseline(request(ws), TickingClock(step=10))
+    assert not ws.baseline.exists()
+
+
+def test_allow_incomplete_writes_a_baseline_marked_incomplete_and_still_exits_4(
     ws: Workspace,
 ) -> None:
     key = make_key(ws)
     write_config(ws.config, [ws.watched], limits={"max_files": 3})
-    outcome = run(ws)
+    outcome = run(ws, allow_incomplete=True)
     assert outcome.complete is False
     assert outcome.exit_code == ExitCode.INCOMPLETE
     assert any(issue.kind.value == "limit_reached" for issue in outcome.issues)
     verified = app.read_verified_baseline(str(ws.baseline), key, str(ws.key_file))
     assert verified.decoded.baseline.header.complete is False
-    assert keystore.read_anchor_bytes(str(ws.key_file)) is not None
+    assert (ws.keys / "fim.key.fim-anchor").exists()
+
+
+def test_allow_incomplete_changes_nothing_for_a_complete_scan(ws: Workspace) -> None:
+    make_key(ws)
+    outcome = run(ws, allow_incomplete=True)
+    assert outcome.complete is True
+    assert outcome.exit_code == ExitCode.OK
 
 
 def test_a_baseline_over_the_size_limit_is_not_written(ws: Workspace) -> None:

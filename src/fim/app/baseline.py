@@ -134,6 +134,7 @@ class BaselineRequest:
     baseline_path: str
     key_file: str | None  # overrides key_file in the configuration
     force: bool
+    allow_incomplete: bool = False  # write a baseline even if a limit stopped the scan
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +168,21 @@ def _refuse_unavailable_roots(issues: tuple[ScanIssue, ...]) -> None:
     raise ConfigError(f"cannot make a baseline, a monitored path is unavailable: {shown}{suffix}")
 
 
+def _refuse_incomplete(issues: tuple[ScanIssue, ...]) -> None:
+    """An incomplete baseline would leave part of the tree unwatched, so it is not written."""
+    why = [
+        issue.detail
+        for issue in issues
+        if issue.kind in (IssueKind.LIMIT_REACHED, IssueKind.TIME_BUDGET)
+    ]
+    shown = "; ".join(why[:_MAX_ISSUES_IN_MESSAGE]) or "a limit was reached"
+    raise LimitReachedError(
+        f"the scan was incomplete ({shown}); nothing was written. Narrow the monitored paths, "
+        "add excludes or raise a limit (up to its ceiling) in the configuration, or use "
+        "--allow-incomplete to write a baseline marked incomplete"
+    )
+
+
 def _load_anchor_sequence(key: Key, key_path: str) -> tuple[int, bool]:
     """The next sequence number and whether an anchor existed. A bad anchor raises (exit 3)."""
     raw = keystore.read_anchor_bytes(key_path)
@@ -182,8 +198,10 @@ def run_baseline(
 
     Raises a FimError for everything that stops it: unreadable configuration or key, a monitored
     path that is unavailable, a bad anchor, an existing baseline without ``force``, a baseline
-    that would exceed the size limit. An incomplete scan still writes the baseline (its header
-    says ``complete: false``) and the outcome carries exit code 4.
+    that would exceed the size limit. An incomplete scan (a limit or the time budget) writes
+    nothing and raises LimitReachedError (exit code 4) unless ``allow_incomplete`` is set; then the
+    baseline is written with ``complete: false`` in its header and the outcome still carries
+    exit code 4.
     """
     home = hostinfo.home_directory()
     config = read_config(request.config_path)
@@ -202,6 +220,8 @@ def run_baseline(
     sequence, anchor_existed = _load_anchor_sequence(key, key_path)
 
     result = scan(policy, clock, view=view)
+    if not result.complete and not request.allow_incomplete:
+        _refuse_incomplete(result.issues)
     _refuse_unavailable_roots(result.issues)  # a root that vanished during the scan
 
     header = BaselineHeader(
