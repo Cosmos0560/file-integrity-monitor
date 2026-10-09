@@ -18,6 +18,8 @@ directory (created exclusively, mode 0600 on POSIX, flushed and fsynced); withou
 published with a hard link, which fails if the target exists, on NTFS and POSIX alike, so there
 is no check-then-write race; with ``force`` it replaces the target with ``os.replace``, which
 replaces a link itself and never writes through it. The temporary file is removed on every path.
+On a file system without hard links (FAT, exFAT) the publish falls back to creating the final
+file directly with ``O_CREAT | O_EXCL`` and an fsync: still no-clobber, but not atomic.
 Residual risk, documented: a parent directory swapped between the checks and the rename.
 """
 
@@ -301,7 +303,7 @@ def write_own_file(
         finally:
             with contextlib.suppress(OSError):
                 os.close(descriptor)
-        _publish(temp, path, force, label)
+        _publish(temp, path, force, label, data, mode)
         _sync_directory(directory)
     finally:
         # After os.replace the temporary name is gone; after os.link it is still there.
@@ -309,7 +311,22 @@ def write_own_file(
             os.unlink(temp)
 
 
-def _publish(temp: str, path: str, force: bool, label: str) -> None:
+# A hard link that fails for one of these reasons means the file system has no hard links (FAT,
+# exFAT, some network and removable file systems). Windows reports it as ERROR_INVALID_FUNCTION (1)
+# or ERROR_NOT_SUPPORTED (50), which Python maps to EINVAL.
+_NO_HARD_LINKS_ERRNOS = frozenset(
+    {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS, errno.EINVAL, errno.EMLINK}
+)
+_NO_HARD_LINKS_WINERRORS = frozenset({1, 50})
+
+
+def _hard_links_unsupported(exc: OSError) -> bool:
+    return exc.errno in _NO_HARD_LINKS_ERRNOS or getattr(exc, "winerror", None) in (
+        _NO_HARD_LINKS_WINERRORS
+    )
+
+
+def _publish(temp: str, path: str, force: bool, label: str, data: bytes, mode: int) -> None:
     try:
         if force:
             os.replace(temp, path)
@@ -320,5 +337,34 @@ def _publish(temp: str, path: str, force: bool, label: str) -> None:
             f"{label} '{_shown(path)}' already exists; use --force to replace it"
         ) from None
     except OSError as exc:
-        hint = "" if force else " (the file system may not support hard links)"
-        raise _failure(label, path, "published" + hint, exc) from None
+        if force or not _hard_links_unsupported(exc):
+            raise _failure(label, path, "published", exc) from None
+        _write_exclusive(path, data, mode, label)
+
+
+def _write_exclusive(path: str, data: bytes, mode: int, label: str) -> None:
+    """Fallback for file systems without hard links: create the final file exclusively.
+
+    ``O_CREAT | O_EXCL`` keeps the no-clobber rule (an existing file or link, even one that
+    appeared a moment ago, is refused), and the data is fsynced, but the write is no longer
+    atomic: a crash can leave a partial file, and a reader can see one while it is written.
+    That is the documented price of such file systems; a partial file is removed on failure.
+    """
+    try:
+        descriptor = os.open(path, _write_flags(), mode)
+    except FileExistsError:
+        raise FileAccessError(
+            f"{label} '{_shown(path)}' already exists; use --force to replace it"
+        ) from None
+    except OSError as exc:
+        raise _failure(label, path, "created", exc) from None
+    try:
+        _write_all(descriptor, data)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        with contextlib.suppress(OSError):
+            os.unlink(path)  # we created it a moment ago with O_EXCL, so it is ours
+        raise _failure(label, path, "written", exc) from None
+    with contextlib.suppress(OSError):
+        os.close(descriptor)

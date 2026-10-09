@@ -384,6 +384,12 @@ policy -> `core.diff` -> `Report` -> renderer -> stdout or atomic file write. Ex
 - Without `--force`: publish with `os.link(temp, final)` then remove temp (fails if final exists,
   on both NTFS and POSIX; no check-then-write race). With `--force`: `os.replace`. Then fsync the
   directory on POSIX.
+- On a file system without hard links (FAT, exFAT, some removable or network file systems) the
+  hard-link publish fails with a "not supported" error; then, without `--force` only, the data is
+  written directly to the final path with `O_CREAT | O_EXCL` (plus `O_NOFOLLOW` on POSIX) and an
+  fsync. No-clobber is kept, atomicity is not: a crash can leave a partial file, and a reader can
+  see one while it is written. A partial file is removed when the write fails. Listed under
+  Limitations.
 - Residual risk, documented: a parent directory swapped between validation and rename.
 
 ### 1.5 Exit codes
@@ -585,7 +591,8 @@ review pass of the four security-critical modules with any fixes test-first.
 ACL/owner, ADS, POSIX ACL/xattr/capabilities; same-privilege attacker can forge baselines;
 rollback detectable only via the anchor, which an attacker who can delete files in the key
 directory can remove (warned, not refused); atime may update; confusable glyphs; key ACL not verified on Windows;
-mapped network drives not detected as such.
+mapped network drives not detected as such; on file systems without hard links
+(FAT, exFAT) files are not written atomically, only exclusively.
 **Definition of done:** release checks pass in a temp venv outside the repo with pasted output;
 README contains only real output and measured numbers; gate green on the full suite; final phase
 report written. Tagging and pushing are yours.
@@ -683,3 +690,6 @@ report written. Tagging and pushing are yours.
   header, updates the anchor, and still exits 4. Items (1) one anchor per key and (8) no fallback
   for file systems without hard links are accepted but then replaced by the owner's next two
   decisions in this entry, below.
+  (d) FAT/exFAT fallback, owner decision: when the hard-link publish fails because the file system
+  has no hard links, `safe_files` creates the final file directly with `O_CREAT | O_EXCL` and an
+  fsync (section 1.4 and the Limitations list updated); this replaces deviation (8) of v0.3.4.

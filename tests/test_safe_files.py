@@ -562,12 +562,131 @@ def test_a_failed_force_write_keeps_the_old_file_and_cleans_up(
     assert names(tmp_path) == ["out"]
 
 
-def test_a_link_failure_names_the_hard_link_limitation(
+NO_LINK_ERRORS = [
+    OSError(errno.EPERM, "operation not permitted"),
+    OSError(errno.ENOTSUP, "not supported"),
+    OSError(errno.EOPNOTSUPP, "not supported"),
+    OSError(errno.ENOSYS, "not implemented"),
+    OSError(errno.EINVAL, "invalid"),
+    OSError(errno.EMLINK, "too many links"),
+    OSError(0, "function is not valid", None, 1),  # Windows: ERROR_INVALID_FUNCTION on exFAT
+]
+
+
+@pytest.mark.parametrize("error", NO_LINK_ERRORS)
+def test_without_hard_links_the_file_is_created_directly_and_exclusively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+) -> None:
+    calls: list[str] = []
+    real_open = os.open
+
+    def spy(path: str, flags: int, mode: int = 0o777, **k: Any) -> int:
+        calls.append(f"open:{Path(path).name}:{bool(flags & os.O_EXCL)}")
+        return real_open(path, flags, mode, **k)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.link", raising(error))
+    monkeypatch.setattr("fim.fs.safe_files.os.open", spy)
+    write_file(str(tmp_path / "out"), b"payload", force=False)
+    assert (tmp_path / "out").read_bytes() == b"payload"
+    assert names(tmp_path) == ["out"]  # no temporary file left behind
+    final = [call for call in calls if call.startswith("open:out")]
+    assert final == ["open:out:True"]  # created with O_EXCL at the final path
+
+
+def test_the_fallback_is_still_no_clobber(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The target appears between the check and the fallback: it must not be overwritten."""
+    target = tmp_path / "out"
+
+    def no_links_but_someone_creates_the_target(source: str, destination: str) -> None:
+        Path(destination).write_bytes(b"someone else")
+        raise OSError(errno.EPERM, "operation not permitted")
+
+    monkeypatch.setattr("fim.fs.safe_files.os.link", no_links_but_someone_creates_the_target)
+    with pytest.raises(FileAccessError, match="already exists; use --force"):
+        write_file(str(target), b"mine", force=False)
+    assert target.read_bytes() == b"someone else"
+    assert names(tmp_path) == ["out"]
+
+
+def test_the_fallback_creates_the_file_with_the_same_flags_as_the_temporary_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """So on POSIX it also has O_NOFOLLOW (a link planted at the target is not followed)."""
+    seen: dict[str, int] = {}
+    real_open = os.open
+
+    def spy(path: str, flags: int, mode: int = 0o777, **k: Any) -> int:
+        seen[Path(path).name.split(".")[0] or "temp"] = flags
+        return real_open(path, flags, mode, **k)
+
     monkeypatch.setattr("fim.fs.safe_files.os.link", raising(OSError(errno.EPERM, "x")))
-    with pytest.raises(FileAccessError, match="may not support hard links"):
+    monkeypatch.setattr("fim.fs.safe_files.os.open", spy)
+    write_file(str(tmp_path / "out"), b"d", force=False)
+    assert seen["out"] == seen["temp"] == safe_files._write_flags()
+    assert seen["out"] & os.O_EXCL
+
+
+def test_a_failed_fallback_write_removes_the_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_write = os.write
+    writes: list[int] = []
+
+    def fail_on_the_final_file(descriptor: int, data: Any) -> int:
+        writes.append(descriptor)
+        if len(writes) > 1:  # the first write fills the temporary file
+            raise OSError(errno.ENOSPC, "no space")
+        return real_write(descriptor, data)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.link", raising(OSError(errno.EPERM, "x")))
+    monkeypatch.setattr("fim.fs.safe_files.os.write", fail_on_the_final_file)
+    with pytest.raises(FileAccessError, match=r"could not be written \(ENOSPC\)"):
+        write_file(str(tmp_path / "out"), b"data", force=False)
+    assert names(tmp_path) == []
+
+
+def test_a_fallback_that_cannot_create_the_file_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_open = os.open
+
+    def deny_final(path: str, flags: int, mode: int = 0o777, **k: Any) -> int:
+        if Path(path).name == "out":
+            raise PermissionError(errno.EACCES, "denied")
+        return real_open(path, flags, mode, **k)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.link", raising(OSError(errno.EPERM, "x")))
+    monkeypatch.setattr("fim.fs.safe_files.os.open", deny_final)
+    with pytest.raises(FileAccessError, match=r"could not be created \(EACCES\)"):
+        write_file(str(tmp_path / "out"), b"data", force=False)
+    assert names(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(errno.ENOSPC, "no space"),
+        OSError(errno.EIO, "io"),
+        OSError(errno.EACCES, "denied"),
+        OSError(errno.EXDEV, "cross-device"),
+        OSError(0, "access denied", None, 5),  # Windows ERROR_ACCESS_DENIED
+    ],
+)
+def test_other_link_failures_are_not_a_reason_to_fall_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+) -> None:
+    monkeypatch.setattr("fim.fs.safe_files.os.link", raising(error))
+    with pytest.raises(FileAccessError, match="could not be published"):
         write_file(str(tmp_path / "out"), b"d", force=False)
+    assert names(tmp_path) == []
+
+
+def test_force_never_uses_the_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "out").write_bytes(b"old")
+    monkeypatch.setattr("fim.fs.safe_files.os.replace", raising(OSError(errno.EPERM, "x")))
+    with pytest.raises(FileAccessError, match="could not be published"):
+        write_file(str(tmp_path / "out"), b"new", force=True)
+    assert (tmp_path / "out").read_bytes() == b"old"
 
 
 def test_the_temporary_file_is_created_exclusively_in_the_same_directory(
