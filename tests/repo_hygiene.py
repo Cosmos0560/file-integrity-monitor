@@ -26,6 +26,7 @@ ALLOWED_CONTROLS = frozenset({"\n", "\r", "\t"})
 # File names that are secrets whatever they contain (matched case-insensitively on the base name).
 SECRET_NAME_PATTERNS = ("*.key", "*.pem", "*.p12", "*.pfx", "id_rsa*", ".env*")
 KEY_FILE_HEADER = b"FIM-HMAC-KEY"
+ANCHOR_FILE_HEADER = b"FIM-ANCHOR"
 BASELINE_FORMAT_MARKER = b'"fim-baseline"'
 HEADER_SNIFF_BYTES = 1024
 
@@ -102,9 +103,12 @@ def is_secret_name(relative: str) -> bool:
 
 
 def secret_header_kind(head: bytes) -> str | None:
-    """'fim key' or 'fim baseline' if the first bytes of a file identify one, else None."""
+    """'fim key', 'fim rollback anchor' or 'fim baseline' if the first bytes of a file identify
+    one, else None."""
     if head.startswith(KEY_FILE_HEADER):
         return "fim key"
+    if head.startswith(ANCHOR_FILE_HEADER):
+        return "fim rollback anchor"
     first_line = head.split(b"\n", 1)[0]
     if first_line.lstrip().startswith(b"{") and BASELINE_FORMAT_MARKER in first_line:
         return "fim baseline"

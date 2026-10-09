@@ -103,6 +103,8 @@ SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
             "fim.core.pathrules",
         }
     ),
+    # The codec signs with the keystore's Key; the keystore knows nothing of the codec.
+    "fim.services.baseline_codec": frozenset({"fim.services.keystore"}),
 }
 
 # module -> the only modules that may import it (A013).

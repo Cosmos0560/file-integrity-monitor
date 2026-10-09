@@ -204,3 +204,41 @@ def test_the_constants_are_the_documented_windows_values() -> None:
     assert IO_REPARSE_TAG_SYMLINK == 0xA000000C
     assert IO_REPARSE_TAG_MOUNT_POINT == 0xA0000003
     assert perms.TRACKED_WINDOWS_ATTRIBUTES == 0x7
+
+
+# ---- the private-file rule (PLAN.md D2) --------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o400, 0o700, 0o100600, 0o100400])
+def test_a_file_only_the_owner_can_access_is_private(mode: int) -> None:
+    assert perms.private_file_problem(mode, 1000, 1000) is None
+
+
+@pytest.mark.parametrize(
+    "mode", [0o640, 0o604, 0o644, 0o660, 0o606, 0o666, 0o610, 0o601, 0o100644, 0o100077]
+)
+def test_a_file_group_or_others_can_access_is_not_private(mode: int) -> None:
+    problem = perms.private_file_problem(mode, 1000, 1000)
+    assert problem is not None
+    assert "group or to others" in problem
+
+
+def test_a_file_owned_by_someone_else_is_not_private() -> None:
+    assert perms.private_file_problem(0o600, 0, 1000) == "it is owned by another user"
+
+
+def test_the_mode_problem_is_reported_before_the_owner_problem() -> None:
+    assert "group or to others" in (perms.private_file_problem(0o644, 0, 1000) or "")
+
+
+def test_without_ids_nothing_can_be_judged() -> None:
+    """Windows: no uid, and the ACL is not examined (PLAN.md D7), so the rule never refuses."""
+    assert perms.private_file_problem(0o666, None, None) is None
+    assert perms.private_file_problem(0o666, 1000, None) is None
+    assert perms.private_file_problem(0o666, None, 1000) is None
+
+
+@pytest.mark.parametrize("bad", [-1, 0o200000, True, "600", 1.5])
+def test_private_file_problem_refuses_a_non_mode(bad: Any) -> None:
+    with pytest.raises(ModelError):
+        perms.private_file_problem(bad, 1, 1)

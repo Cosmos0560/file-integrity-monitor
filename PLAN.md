@@ -650,3 +650,29 @@ report written. Tagging and pushing are yours.
   recognise it by that header, and the anchor's file name pattern is added to .gitignore;
   (c) the configuration file is read through fs/safe_files.py with a no-follow read capped at
   MAX_CONFIG_BYTES and the usual path refusals (invariant 3).
+- v0.3.4 (2026-10-09): Phase 3 implementation notes, deviations recorded for your acceptance
+  (details in docs/phase-reports.md): (1) the rollback anchor is one file per key, named after the
+  key file plus `.fim-anchor` in the same directory, in a fixed five-line text format (header
+  `FIM-ANCHOR v1`, then `key_id`, `sequence`, `payload_sha256`, `mac`), not JSON, so it is parsed
+  without a JSON parser before its MAC verifies; a key shared by two baselines therefore makes
+  `check` report a mismatch for one of them (use one key per baseline); (2) `fim baseline` refuses
+  with exit 2 for every `root_unavailable` scan issue (missing, unreadable, link or reparse
+  point), as v0.3.2 item 5 asked, and it notices only after the scan; (3) an incomplete scan
+  (limit or time budget) still writes the baseline, with `complete: false` in its header, and
+  exits 4; (4) the baseline is written before the anchor, so a failure between the two leaves a
+  baseline without a current anchor, repaired by running `fim baseline --force` again; (5) the key
+  file grammar is strict (LF line ends only, lower-case hex, exactly two lines) and no error ever
+  quotes file content; (6) `fim init-key` takes an optional `--config`, used only to refuse a key
+  path inside the monitored paths, and `--key-file` on `baseline` overrides `key_file` of the
+  configuration; argparse abbreviations are off, so `--key <value>` cannot be read as `--key-file`;
+  (7) the append-log writer named in section 1.4 is not built yet; it arrives with `watch` in
+  Phase 5; (8) the hard-link publish of section 1.4 has no fallback: a file system without hard
+  links (FAT, exFAT) is reported with a clear message instead of a racy overwrite; (9) built ahead
+  of its phase because the layers need it: `app.baseline.read_verified_baseline` (size cap, MAC,
+  then anchor check, missing anchor as a warning), the function Phase 4 wires into `check` and
+  `watch`; (10) new small pieces: error classes `FileAccessError` and `FileMissingError`,
+  `core/perms.private_file_problem`, `core/pathrules.display_user_path`, `platform/hostinfo.py`;
+  (11) test infrastructure: the autouse fake home directories are created once per run instead of
+  once per test (the default pytest run went from 22.5 s to 12.7 s on the development machine) and
+  a teardown check fails any test that writes into them; `tests/data/golden_payload.json` pins
+  the canonical payload bytes.

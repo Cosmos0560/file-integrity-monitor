@@ -33,6 +33,7 @@ __all__ = [
     "is_offline",
     "is_reparse_point",
     "posix_permissions",
+    "private_file_problem",
     "tracked_windows_attributes",
 ]
 
@@ -52,6 +53,7 @@ TRACKED_WINDOWS_ATTRIBUTES = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | F
 _OFFLINE_BITS = (
     FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 )
+_GROUP_OTHER_BITS = 0o077
 _MAX_ATTRIBUTES = 0xFFFFFFFF
 _MAX_MODE = 0o177777
 
@@ -129,3 +131,22 @@ def describe_windows_attributes(file_attributes: int) -> str:
     _check("file attributes", file_attributes, _MAX_ATTRIBUTES)
     names = [name for bit, name in _WINDOWS_NAMES if file_attributes & bit]
     return "|".join(names) if names else "none"
+
+
+def private_file_problem(
+    st_mode: int, owner_uid: int | None, current_uid: int | None
+) -> str | None:
+    """Why a POSIX file is not private to the current user, or None if it is (PLAN.md D2).
+
+    A key file must not be readable by its group or by others and must belong to the user running
+    the tool. On Windows there is no uid and the ACL is not examined (D7), so both ids are None
+    and nothing can be said; that is a documented limitation, not a pass.
+    """
+    _check("st_mode", st_mode, _MAX_MODE)
+    if owner_uid is None or current_uid is None:
+        return None
+    if st_mode & _GROUP_OTHER_BITS:
+        return f"it is accessible to its group or to others (mode {st_mode & 0o7777:04o})"
+    if owner_uid != current_uid:
+        return "it is owned by another user"
+    return None

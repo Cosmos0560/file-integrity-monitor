@@ -77,6 +77,8 @@ def test_every_error_class_maps_to_exactly_one_failure_exit_code() -> None:
         (errors.ConfigError, ExitCode.ERROR),
         (errors.PathRuleError, ExitCode.ERROR),
         (errors.ModelError, ExitCode.ERROR),
+        (errors.FileAccessError, ExitCode.ERROR),
+        (errors.FileMissingError, ExitCode.ERROR),
         (errors.BaselineIntegrityError, ExitCode.INTEGRITY),
         (errors.LimitReachedError, ExitCode.INCOMPLETE),
     ],

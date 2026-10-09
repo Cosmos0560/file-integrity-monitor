@@ -91,6 +91,7 @@ def test_gitignore_lists_the_secret_and_environment_patterns() -> None:
         ".env*",
         ".venv/",
         "*.baseline*",
+        "*.fim-anchor",
         "*.log",
     ):
         assert expected in patterns, expected
@@ -230,6 +231,24 @@ def test_fim_key_file_is_detected_by_header_under_an_innocent_name(tmp_path: Pat
     (tmp_path / "notes.txt").write_bytes(b"FIM-HMAC-KEY v1\n" + b"ab" * 32 + b"\n")
     problems = hygiene.find_secret_files(tmp_path, ["notes.txt"])
     assert problems == ["notes.txt: looks like a fim key file"]
+
+
+def test_fim_rollback_anchor_is_detected_by_header_under_an_innocent_name(tmp_path: Path) -> None:
+    anchor = "FIM-ANCHOR v1\nkey_id " + "0" * 16 + "\nsequence 1\n"
+    (tmp_path / "notes.txt").write_bytes(anchor.encode("ascii"))
+    problems = hygiene.find_secret_files(tmp_path, ["notes.txt"])
+    assert problems == ["notes.txt: looks like a fim rollback anchor file"]
+
+
+@pytest.mark.requires_git
+def test_git_ignores_key_baseline_and_anchor_files(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_bytes((REPO_ROOT / ".gitignore").read_bytes())
+    for name in ("fim.key", "keys/fim.key.fim-anchor", "out.baseline", "x.baseline.bak"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(b"x")
+    listed = hygiene.list_repo_files(tmp_path)
+    assert listed == [".gitignore"]
 
 
 def test_fim_baseline_is_detected_by_header_under_an_innocent_name(tmp_path: Path) -> None:

@@ -26,3 +26,4 @@ dist/
 id_rsa*
 .env*
 *.baseline*
+*.fim-anchor

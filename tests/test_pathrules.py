@@ -17,6 +17,7 @@ from fim.core.pathrules import (
     Flavour,
     UserPath,
     display_path,
+    display_user_path,
     is_reserved_windows_name,
     is_within,
     record_path,
@@ -524,3 +525,39 @@ def test_display_refuses_a_non_canonical_record_path() -> None:
 
 def test_module_exports() -> None:
     assert set(pathrules.__all__) >= {"validate_user_path", "Flavour", "UserPath", "display_path"}
+
+
+# ---- display_user_path ---------------------------------------------------------------------------
+
+
+def test_a_windows_path_is_shown_with_single_backslashes() -> None:
+    shown = display_user_path(r"C:\Users\lab\fim.key", WIN)
+    assert shown == r"C:\Users\lab\fim.key"
+    assert "\\\\" not in shown
+
+
+def test_a_posix_path_is_shown_with_slashes() -> None:
+    assert display_user_path("/home/lab/fim.key", POSIX) == "/home/lab/fim.key"
+    assert display_user_path("rel/dir/k", POSIX) == "rel/dir/k"
+
+
+def test_a_tilde_path_is_shown_as_given() -> None:
+    assert display_user_path("~/keys/k", POSIX) == "~/keys/k"
+
+
+def test_dangerous_characters_in_a_shown_path_are_escaped() -> None:
+    shown = display_user_path("/dir/a\u202eb", POSIX)
+    assert "\u202e" not in shown
+    assert shown == "/dir/a\\u202eb"
+
+
+def test_a_refused_path_is_shown_escaped_and_clipped() -> None:
+    shown = display_user_path("a/../b\x1b[31m", POSIX)
+    assert "\x1b" not in shown
+    assert "\\x1b" in shown
+    assert len(display_user_path("http://" + "a" * 500, POSIX, 50)) <= 50
+
+
+def test_a_valid_but_too_long_path_is_clipped() -> None:
+    path = "/" + "/".join(["component"] * 30)
+    assert len(display_user_path(path, POSIX, 40)) <= 40

@@ -32,6 +32,7 @@ __all__ = [
     "UserPath",
     "display_link_target",
     "display_path",
+    "display_user_path",
     "expand_tilde",
     "is_reserved_windows_name",
     "is_within",
@@ -278,6 +279,19 @@ def display_path(root: UserPath, record: str) -> str:
         return base
     tail = root.sep.join(escape(part) for part in split_record_path(record))
     return base + tail if base.endswith(root.sep) else base + root.sep + tail
+
+
+def display_user_path(raw: str, flavour: Flavour, max_chars: int = _MESSAGE_PATH_CHARS) -> str:
+    """A path given by the user, made fit for a message: escaped per component, native separators.
+
+    A path the rules refuse (or one that is too long to show whole) falls back to the plain
+    escaped and clipped text, which is also what makes a refused path safe to quote.
+    """
+    try:
+        shown = validate_user_path(raw, flavour, allow_tilde=True).display()
+    except PathRuleError:
+        return clip_escaped(raw, max_chars)
+    return shown if len(shown) <= max_chars else clip_escaped(raw, max_chars)
 
 
 def expand_tilde(path: UserPath, home: UserPath) -> UserPath:

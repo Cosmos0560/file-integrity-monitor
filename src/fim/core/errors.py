@@ -64,6 +64,14 @@ class PathRuleError(FimError):
     """A user-supplied path that the path rules refuse."""
 
 
+class FileAccessError(FimError):
+    """The tool could not read or write one of its own files (key, baseline, anchor, config)."""
+
+
+class FileMissingError(FileAccessError):
+    """One of the tool's own files does not exist (so callers can tell "absent" from "broken")."""
+
+
 class ModelError(FimError):
     """A data object that would break an invariant (an internal error, never user input)."""
 
