@@ -83,6 +83,9 @@ Gate rules:
 - Never pipe, filter or redirect the gate output (no `| tail`, `| Select-String`, `| tee`,
   `2>&1 |`, `> file`). If a log is needed, use `python scripts/gate.py --log <file>`, which writes
   the log itself and keeps the exit status.
+- A Claude Code PreToolUse hook (`.claude/settings.json`, script `scripts/hooks/guard_gate.py`)
+  blocks any Bash command that runs `scripts/gate.py` together with a pipe, a redirect, `|| true`,
+  `; true` or a filter such as tail, head, tee or Select-String. Run other commands separately.
 - Gate steps, in order: `ruff check`, `ruff format --check`, `mypy --platform linux`,
   `mypy --platform win32`, `scripts/check_architecture.py`, `pytest` with branch coverage
   `--cov-fail-under=85`. The gate runs every step, prints a summary, and exits non-zero if any failed.
