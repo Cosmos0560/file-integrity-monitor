@@ -14,9 +14,11 @@ decoding is fixed: size cap, envelope (tiny, strictly checked), format and versi
 then the payload parser runs. Any failure is a ``BaselineIntegrityError`` (exit code 3); the
 parser never sees bytes that did not verify, and nothing is re-canonicalised before the MAC.
 
-The rollback anchor is a small text file: a header line and four ``name value`` lines (key id,
-sequence, payload SHA-256, MAC). It is signed with a different domain prefix, so a baseline MAC
-cannot be passed off as an anchor MAC or the other way round. ``verify_against_anchor`` is the
+The rollback anchor is a small text file, one per baseline: a header line and five ``name value``
+lines (key id, baseline id, sequence, payload SHA-256, MAC). The baseline id is part of what is
+signed, so an anchor copied to another baseline's file name is refused. It is signed with a
+different domain prefix, so a baseline MAC cannot be passed off as an anchor MAC or the other
+way round. ``verify_against_anchor`` is the
 check ``check`` and ``watch`` run.
 """
 
@@ -70,9 +72,9 @@ BASELINE_FORMAT = "fim-baseline"
 BASELINE_VERSION = 1
 MAC_ALGORITHM = "HMAC-SHA256"
 ENVELOPE_MAX_BYTES = 1024
-ANCHOR_HEADER = "FIM-ANCHOR v1"
+ANCHOR_HEADER = "FIM-ANCHOR v2"
 _BASELINE_MAC_DOMAIN = b"fim-baseline\x00v1\x00"
-_ANCHOR_MAC_DOMAIN = b"fim-anchor\x00v1\x00"
+_ANCHOR_MAC_DOMAIN = b"fim-anchor\x00v2\x00"
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 _TIME_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 _HEX16 = re.compile(r"[0-9a-f]{16}")
@@ -450,30 +452,40 @@ class Anchor:
     """The signed record of the latest baseline: its sequence and payload digest."""
 
     key_id: str
+    baseline_id: str
     sequence: int
     payload_sha256: str
 
 
-def _anchor_mac(key: Key, key_id: str, sequence: int, payload_sha256: str) -> str:
+def _anchor_mac(key: Key, key_id: str, baseline_id: str, sequence: int, digest: str) -> str:
     message = b"\x00".join(
-        (key_id.encode("ascii"), str(sequence).encode("ascii"), payload_sha256.encode("ascii"))
+        (
+            key_id.encode("ascii"),
+            baseline_id.encode("ascii"),
+            str(sequence).encode("ascii"),
+            digest.encode("ascii"),
+        )
     )
     return key.mac(_ANCHOR_MAC_DOMAIN + message).hex()
 
 
-def encode_anchor(key: Key, sequence: int, payload_sha256: str) -> bytes:
-    """The anchor file content for a baseline with this sequence and payload digest."""
+def encode_anchor(key: Key, baseline_id: str, sequence: int, payload_sha256: str) -> bytes:
+    """The anchor file content for a baseline with this id, sequence and payload digest."""
+    if _HEX16.fullmatch(baseline_id) is None:
+        raise ModelError("an anchor needs a 16 hex character baseline id")
     if type(sequence) is not int or not 1 <= sequence <= _MAX_SEQUENCE:
         raise ModelError("an anchor needs a sequence of at least 1")
     if _HEX64.fullmatch(payload_sha256) is None:
         raise ModelError("an anchor needs a SHA-256 payload digest")
     key_id = key.key_id
+    mac = _anchor_mac(key, key_id, baseline_id, sequence, payload_sha256)
     lines = (
         ANCHOR_HEADER,
         f"key_id {key_id}",
+        f"baseline_id {baseline_id}",
         f"sequence {sequence}",
         f"payload_sha256 {payload_sha256}",
-        f"mac {_anchor_mac(key, key_id, sequence, payload_sha256)}",
+        f"mac {mac}",
     )
     return ("\n".join(lines) + "\n").encode("ascii")
 
@@ -486,8 +498,12 @@ def _anchor_fields(data: bytes) -> dict[str, str]:
     if lines and lines[-1] == "":
         lines.pop()
     if not lines or lines[0] != ANCHOR_HEADER:
+        if lines and lines[0] == "FIM-ANCHOR v1":
+            raise _anchor_refusal(
+                "it is in the old one-anchor-per-key format; move it away and make a new baseline"
+            )
         raise _anchor_refusal(f"it does not start with the '{ANCHOR_HEADER}' line")
-    names = ("key_id", "sequence", "payload_sha256", "mac")
+    names = ("key_id", "baseline_id", "sequence", "payload_sha256", "mac")
     fields: dict[str, str] = {}
     for name, line in zip(names, lines[1:], strict=False):
         prefix, _, value = line.partition(" ")
@@ -495,7 +511,7 @@ def _anchor_fields(data: bytes) -> dict[str, str]:
             raise _anchor_refusal("a line is malformed or out of order")
         fields[name] = value
     if len(lines) != len(names) + 1:
-        raise _anchor_refusal("it must have exactly five lines")
+        raise _anchor_refusal("it must have exactly six lines")
     return fields
 
 
@@ -503,12 +519,18 @@ def _anchor_refusal(reason: str) -> BaselineIntegrityError:
     return BaselineIntegrityError(f"the rollback anchor is not trustworthy: {reason}")
 
 
-def decode_anchor(data: bytes, key: Key) -> Anchor:
-    """Parse and verify anchor file content; raise BaselineIntegrityError if it does not verify."""
+def decode_anchor(data: bytes, key: Key, baseline_id: str) -> Anchor:
+    """Parse and verify the anchor of the baseline ``baseline_id``; raise BaselineIntegrityError.
+
+    An anchor that is for a different baseline is refused too.
+    """
     fields = _anchor_fields(data)
     key_id, digest, mac = fields["key_id"], fields["payload_sha256"], fields["mac"]
+    found_id = fields["baseline_id"]
     sequence_text = fields["sequence"]
-    if _HEX16.fullmatch(key_id) is None or _HEX64.fullmatch(digest) is None:
+    if _HEX16.fullmatch(key_id) is None or _HEX16.fullmatch(found_id) is None:
+        raise _anchor_refusal("a field is malformed")
+    if _HEX64.fullmatch(digest) is None:
         raise _anchor_refusal("a field is malformed")
     if _HEX64.fullmatch(mac) is None or re.fullmatch(r"[1-9][0-9]{0,15}", sequence_text) is None:
         raise _anchor_refusal("a field is malformed")
@@ -521,10 +543,15 @@ def decode_anchor(data: bytes, key: Key) -> Anchor:
             f"this key's id is {key.key_id}); if you replaced the key on purpose, "
             "move the old anchor file away and make a new baseline"
         )
-    expected = _anchor_mac(key, key_id, sequence, digest)
+    expected = _anchor_mac(key, key_id, found_id, sequence, digest)
     if not hmac.compare_digest(expected.encode("ascii"), mac.encode("ascii")):
         raise _anchor_refusal("its MAC does not verify: the file was changed or damaged")
-    return Anchor(key_id=key_id, sequence=sequence, payload_sha256=digest)
+    if found_id != baseline_id:
+        raise _anchor_refusal(
+            f"it belongs to another baseline file (anchor for {found_id}, this baseline is "
+            f"{baseline_id}): an anchor was copied or renamed"
+        )
+    return Anchor(key_id=key_id, baseline_id=found_id, sequence=sequence, payload_sha256=digest)
 
 
 def next_sequence(anchor: Anchor | None) -> int:

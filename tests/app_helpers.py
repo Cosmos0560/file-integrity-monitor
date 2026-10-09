@@ -8,6 +8,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from fim.services import keystore
+
 
 @dataclass(frozen=True)
 class Workspace:
@@ -17,6 +19,12 @@ class Workspace:
     key_file: Path
     baseline: Path
     config: Path
+
+
+def anchor_file(workspace: Workspace, baseline: Path | None = None) -> Path:
+    """Where the rollback anchor of ``baseline`` (default: the workspace baseline) lives."""
+    baseline_id = keystore.baseline_id_for(str(baseline or workspace.baseline))
+    return Path(keystore.anchor_path(str(workspace.key_file), baseline_id))
 
 
 def yaml_text(value: str) -> str:

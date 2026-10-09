@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import winhelp
-from app_helpers import Workspace, make_workspace, tree_state, write_config
+from app_helpers import Workspace, anchor_file, make_workspace, tree_state, write_config
 from fakes import FakeClock
 from fim.app import baseline as app
 from fim.app.baseline import BaselineRequest, InitKeyRequest
@@ -71,7 +71,6 @@ def test_init_key_creates_the_file_and_reports_only_the_key_id(ws: Workspace) ->
     key = keystore.load_key(str(ws.key_file))
     assert outcome.key_id == key.key_id
     assert outcome.key_path == str(ws.key_file)
-    assert outcome.anchor_path == str(ws.key_file) + ".fim-anchor"
     assert key.secret.hex() not in repr(outcome)
 
 
@@ -130,9 +129,9 @@ def test_baseline_writes_a_verifiable_baseline_and_an_anchor(ws: Workspace) -> N
 def test_the_anchor_matches_the_baseline_just_written(ws: Workspace) -> None:
     key = make_key(ws)
     outcome = run(ws)
-    raw = keystore.read_anchor_bytes(str(ws.key_file))
+    raw = anchor_file(ws).read_bytes()
     assert raw is not None
-    anchor = codec.decode_anchor(raw, key)
+    anchor = codec.decode_anchor(raw, key, keystore.baseline_id_for(str(ws.baseline)))
     assert anchor.sequence == outcome.sequence
     assert (
         anchor.payload_sha256
@@ -159,7 +158,7 @@ def test_the_scan_never_changes_a_monitored_file(ws: Workspace) -> None:
 def test_baseline_writes_only_its_own_files(ws: Workspace) -> None:
     make_key(ws)
     run(ws)
-    assert directory_names(ws.keys) == ["fim.key", "fim.key.fim-anchor"]
+    assert directory_names(ws.keys) == sorted(["fim.key", anchor_file(ws).name])
     assert directory_names(ws.baseline.parent) == ["fim.baseline"]
     assert directory_names(ws.base) == ["fim.yaml", "keys", "out", "watched"]
 
@@ -178,7 +177,9 @@ def test_the_command_line_key_overrides_the_configuration(ws: Workspace) -> None
     write_config(ws.config, [ws.watched], key_file=ws.key_file)
     outcome = run(ws, key_file=str(other))
     assert outcome.key_id == other_key.key_id
-    assert (ws.keys / "other.key.fim-anchor").exists()
+    assert Path(
+        keystore.anchor_path(str(other), keystore.baseline_id_for(str(ws.baseline)))
+    ).exists()
 
 
 def test_a_missing_key_setting_is_a_usage_error(ws: Workspace) -> None:
@@ -196,14 +197,14 @@ def test_an_existing_baseline_is_not_replaced_without_force_and_the_scan_does_no
     make_key(ws)
     run(ws)
     before = ws.baseline.read_bytes()
-    anchor_before = (ws.keys / "fim.key.fim-anchor").read_bytes()
+    anchor_before = anchor_file(ws).read_bytes()
     monkeypatch.setattr(
         app, "scan", lambda *_a, **_k: pytest.fail("the scan ran although the write was refused")
     )
     with pytest.raises(FileAccessError, match="already exists; use --force"):
         run(ws)
     assert ws.baseline.read_bytes() == before
-    assert (ws.keys / "fim.key.fim-anchor").read_bytes() == anchor_before
+    assert anchor_file(ws).read_bytes() == anchor_before
 
 
 def test_a_baseline_path_inside_a_monitored_root_is_refused(ws: Workspace) -> None:
@@ -232,7 +233,7 @@ def test_a_missing_baseline_directory_is_an_error(ws: Workspace) -> None:
     make_key(ws)
     with pytest.raises(FileAccessError):
         run(ws, baseline_path=str(ws.base / "nodir" / "fim.baseline"))
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
 
 
 def test_a_missing_monitored_path_is_refused_and_nothing_is_written(ws: Workspace) -> None:
@@ -243,7 +244,7 @@ def test_a_missing_monitored_path_is_refused_and_nothing_is_written(ws: Workspac
     assert raised.value.exit_code == ExitCode.ERROR
     assert "not found" in raised.value.message
     assert not ws.baseline.exists()
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
 
 
 @pytest.mark.requires_symlinks
@@ -258,7 +259,7 @@ def test_a_monitored_root_that_is_a_symlink_is_refused_with_exit_2(ws: Workspace
         run(ws)
     assert raised.value.exit_code == ExitCode.ERROR
     assert not ws.baseline.exists()
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
 
 
 @pytest.mark.windows_only
@@ -296,7 +297,7 @@ def test_a_scan_that_hits_a_limit_writes_nothing_and_is_exit_4(ws: Workspace) ->
     assert "nothing was written" in raised.value.message
     assert "--allow-incomplete" in raised.value.message
     assert not ws.baseline.exists()
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
     assert directory_names(ws.baseline.parent) == []
 
 
@@ -306,12 +307,12 @@ def test_a_refused_incomplete_scan_leaves_an_existing_baseline_and_anchor_alone(
     make_key(ws)
     run(ws)
     baseline_before = ws.baseline.read_bytes()
-    anchor_before = (ws.keys / "fim.key.fim-anchor").read_bytes()
+    anchor_before = anchor_file(ws).read_bytes()
     write_config(ws.config, [ws.watched], limits={"max_files": 3})
     with pytest.raises(LimitReachedError):
         run(ws, force=True)
     assert ws.baseline.read_bytes() == baseline_before
-    assert (ws.keys / "fim.key.fim-anchor").read_bytes() == anchor_before
+    assert anchor_file(ws).read_bytes() == anchor_before
 
 
 def test_the_time_budget_also_counts_as_incomplete(ws: Workspace) -> None:
@@ -335,7 +336,7 @@ def test_allow_incomplete_writes_a_baseline_marked_incomplete_and_still_exits_4(
     assert any(issue.kind.value == "limit_reached" for issue in outcome.issues)
     verified = app.read_verified_baseline(str(ws.baseline), key, str(ws.key_file))
     assert verified.decoded.baseline.header.complete is False
-    assert (ws.keys / "fim.key.fim-anchor").exists()
+    assert anchor_file(ws).exists()
 
 
 def test_allow_incomplete_changes_nothing_for_a_complete_scan(ws: Workspace) -> None:
@@ -352,7 +353,7 @@ def test_a_baseline_over_the_size_limit_is_not_written(ws: Workspace) -> None:
         run(ws)
     assert raised.value.exit_code == ExitCode.INCOMPLETE
     assert not ws.baseline.exists()
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
 
 
 # ---- baseline: the anchor ------------------------------------------------------------------------
@@ -361,7 +362,7 @@ def test_a_baseline_over_the_size_limit_is_not_written(ws: Workspace) -> None:
 def test_a_tampered_anchor_stops_a_new_baseline_with_exit_3(ws: Workspace) -> None:
     make_key(ws)
     run(ws)
-    anchor = ws.keys / "fim.key.fim-anchor"
+    anchor = anchor_file(ws)
     anchor.write_bytes(anchor.read_bytes().replace(b"sequence 1", b"sequence 9"))
     before = ws.baseline.read_bytes()
     with pytest.raises(BaselineIntegrityError) as raised:
@@ -382,7 +383,7 @@ def test_a_missing_anchor_restarts_the_sequence_at_one(ws: Workspace) -> None:
     make_key(ws)
     run(ws)
     run(ws, force=True)
-    (ws.keys / "fim.key.fim-anchor").unlink()
+    anchor_file(ws).unlink()
     outcome = run(ws, force=True)
     assert outcome.sequence == 1
     assert outcome.anchor_existed is False
@@ -401,7 +402,7 @@ def test_if_the_anchor_cannot_be_written_the_error_is_reported_and_force_repairs
         with pytest.raises(FileAccessError, match="anchor file"):
             run(ws)
     assert ws.baseline.exists()  # written first, as documented
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
     assert read(ws, key).warnings  # without an anchor the baseline still verifies, with a warning
     repaired = run(ws, force=True)
     assert repaired.sequence == 1
@@ -490,11 +491,11 @@ def test_a_missing_baseline_is_an_error_never_no_changes(ws: Workspace) -> None:
 
 def test_a_missing_anchor_is_only_a_warning(ws: Workspace) -> None:
     key = make_baseline(ws)
-    (ws.keys / "fim.key.fim-anchor").unlink()
+    anchor_file(ws).unlink()
     verified = read(ws, key)
     assert len(verified.warnings) == 1
     assert "no rollback anchor found" in verified.warnings[0]
-    assert "fim.key.fim-anchor" in verified.warnings[0]
+    assert anchor_file(ws).name in verified.warnings[0]
 
 
 def flip_mac(data: bytes) -> bytes:
@@ -578,7 +579,7 @@ def test_an_older_validly_signed_baseline_put_back_is_refused_as_a_rollback(ws: 
 
 def test_a_tampered_anchor_is_exit_3_when_reading(ws: Workspace) -> None:
     key = make_baseline(ws)
-    anchor = ws.keys / "fim.key.fim-anchor"
+    anchor = anchor_file(ws)
     anchor.write_bytes(anchor.read_bytes().replace(b"sequence 1", b"sequence 2"))
     with pytest.raises(BaselineIntegrityError, match="rollback anchor") as raised:
         read(ws, key)
@@ -625,7 +626,7 @@ def test_the_key_appears_in_no_output_exception_baseline_anchor_or_log(
     captured = capsys.readouterr()
     collected.extend([captured.out, captured.err, caplog.text])
     collected.append(ws.baseline.read_bytes().decode("ascii"))
-    collected.append((ws.keys / "fim.key.fim-anchor").read_text(encoding="ascii"))
+    collected.append(anchor_file(ws).read_text(encoding="ascii"))
     collected.append(repr(os.environ.values()))
     collected.append(repr(sys.argv))
     for text in collected:
@@ -712,3 +713,91 @@ def test_a_root_that_vanishes_during_the_scan_is_still_refused(
     with pytest.raises(ConfigError, match="a monitored path is unavailable"):
         app.run_baseline(request(ws), FakeClock(), view=Vanishing())
     assert not ws.baseline.exists()
+
+
+# ---- one key, several baselines ------------------------------------------------------------------
+
+
+def second_baseline(ws: Workspace) -> tuple[Path, Path]:
+    """A second watched tree, its config and a second baseline file, all using the same key."""
+    other_tree = ws.base / "watched2"
+    other_tree.mkdir()
+    (other_tree / "x.txt").write_bytes(b"x")
+    other_config = ws.base / "fim2.yaml"
+    write_config(other_config, [other_tree])
+    return other_config, ws.baseline.parent / "second.baseline"
+
+
+def run_second(ws: Workspace, other: tuple[Path, Path], **overrides: Any) -> app.BaselineOutcome:
+    config, baseline = other
+    return run(ws, config_path=str(config), baseline_path=str(baseline), **overrides)
+
+
+def test_one_key_protects_two_baselines_without_false_rollback_alarms(ws: Workspace) -> None:
+    key = make_key(ws)
+    other = second_baseline(ws)
+    other_baseline = other[1]
+    assert run(ws).sequence == 1
+    assert run_second(ws, other).sequence == 1  # its own sequence, not the first one's plus one
+    assert run(ws, force=True).sequence == 2
+    assert run_second(ws, other, force=True).sequence == 2
+    assert run(ws, force=True).sequence == 3
+
+    assert anchor_file(ws) != anchor_file(ws, other_baseline)
+    assert anchor_file(ws).exists()
+    assert anchor_file(ws, other_baseline).exists()
+    assert directory_names(ws.keys) == sorted(
+        ["fim.key", anchor_file(ws).name, anchor_file(ws, other_baseline).name]
+    )
+    first = read(ws, key)
+    second = app.read_verified_baseline(str(other_baseline), key, str(ws.key_file))
+    assert first.warnings == ()
+    assert second.warnings == ()
+    assert first.decoded.baseline.header.sequence == 3
+    assert second.decoded.baseline.header.sequence == 2
+
+
+def test_a_rollback_of_one_baseline_does_not_alarm_the_other(ws: Workspace) -> None:
+    key = make_key(ws)
+    other = second_baseline(ws)
+    run(ws)
+    old_first = ws.baseline.read_bytes()
+    run(ws, force=True)
+    run_second(ws, other)
+    ws.baseline.write_bytes(old_first)
+    with pytest.raises(BaselineIntegrityError, match="rollback anchor"):
+        read(ws, key)
+    assert app.read_verified_baseline(str(other[1]), key, str(ws.key_file)).warnings == ()
+
+
+def test_an_anchor_copied_to_another_baselines_name_is_refused(ws: Workspace) -> None:
+    key = make_key(ws)
+    other = second_baseline(ws)
+    run(ws)
+    run_second(ws, other)
+    # An attacker puts the first baseline's anchor where the second one's belongs.
+    anchor_file(ws, other[1]).write_bytes(anchor_file(ws).read_bytes())
+    with pytest.raises(BaselineIntegrityError, match="belongs to another baseline file") as raised:
+        app.read_verified_baseline(str(other[1]), key, str(ws.key_file))
+    assert raised.value.exit_code == ExitCode.INTEGRITY
+    with pytest.raises(BaselineIntegrityError, match="belongs to another baseline file"):
+        run_second(ws, other, force=True)
+
+
+def test_a_moved_baseline_file_has_no_anchor_which_is_only_a_warning(ws: Workspace) -> None:
+    key = make_key(ws)
+    run(ws)
+    moved = ws.baseline.parent / "moved.baseline"
+    moved.write_bytes(ws.baseline.read_bytes())
+    verified = app.read_verified_baseline(str(moved), key, str(ws.key_file))
+    assert len(verified.warnings) == 1
+    assert "no rollback anchor found" in verified.warnings[0]
+
+
+def test_the_same_baseline_reached_by_a_relative_path_uses_the_same_anchor(
+    ws: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = make_key(ws)
+    run(ws)
+    monkeypatch.chdir(ws.baseline.parent)
+    assert app.read_verified_baseline(ws.baseline.name, key, str(ws.key_file)).warnings == ()

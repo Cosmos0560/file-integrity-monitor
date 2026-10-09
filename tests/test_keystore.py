@@ -19,6 +19,8 @@ from fim.services.keystore import Key
 SECRET = bytes(range(32))
 HEX = SECRET.hex()
 HEADER = "FIM-HMAC-KEY v1"
+BID = "b1" * 8
+OTHER_BID = "c2" * 8
 
 
 def write_private(path: Path, data: bytes) -> None:
@@ -201,9 +203,9 @@ def test_init_key_force_replaces_the_key(tmp_path: Path) -> None:
 def test_init_key_force_leaves_an_old_anchor_alone(tmp_path: Path) -> None:
     path = tmp_path / "fim.key"
     keystore.init_key(str(path), force=False)
-    keystore.write_anchor_bytes(str(path), b"anchor")
+    keystore.write_anchor_bytes(str(path), BID, b"anchor")
     keystore.init_key(str(path), force=True)
-    assert keystore.read_anchor_bytes(str(path)) == b"anchor"
+    assert keystore.read_anchor_bytes(str(path), BID) == b"anchor"
 
 
 def test_init_key_refuses_a_path_inside_a_monitored_root(tmp_path: Path) -> None:
@@ -279,35 +281,77 @@ def test_a_new_key_file_is_mode_0600_and_a_group_readable_one_is_refused(tmp_pat
 
 def test_the_anchor_sits_next_to_the_key_with_a_fixed_suffix() -> None:
     assert keystore.ANCHOR_SUFFIX == ".fim-anchor"
-    assert keystore.anchor_path("/keys/fim.key") == "/keys/fim.key.fim-anchor"
+    assert keystore.anchor_path("/keys/fim.key", BID) == f"/keys/fim.key.{BID}.fim-anchor"
 
 
 def test_a_missing_anchor_is_none_not_an_error(tmp_path: Path) -> None:
-    assert keystore.read_anchor_bytes(str(tmp_path / "fim.key")) is None
+    assert keystore.read_anchor_bytes(str(tmp_path / "fim.key"), BID) is None
 
 
 def test_anchor_bytes_round_trip_and_replace(tmp_path: Path) -> None:
     key_path = str(tmp_path / "fim.key")
-    keystore.write_anchor_bytes(key_path, b"one")
-    assert keystore.read_anchor_bytes(key_path) == b"one"
-    keystore.write_anchor_bytes(key_path, b"two")
-    assert keystore.read_anchor_bytes(key_path) == b"two"
-    assert [entry.name for entry in tmp_path.iterdir()] == ["fim.key.fim-anchor"]
+    keystore.write_anchor_bytes(key_path, BID, b"one")
+    assert keystore.read_anchor_bytes(key_path, BID) == b"one"
+    keystore.write_anchor_bytes(key_path, BID, b"two")
+    assert keystore.read_anchor_bytes(key_path, BID) == b"two"
+    assert [entry.name for entry in tmp_path.iterdir()] == [f"fim.key.{BID}.fim-anchor"]
+
+
+def test_each_baseline_has_its_own_anchor_file_next_to_the_one_key(tmp_path: Path) -> None:
+    key_path = str(tmp_path / "fim.key")
+    keystore.write_anchor_bytes(key_path, BID, b"first")
+    keystore.write_anchor_bytes(key_path, OTHER_BID, b"second")
+    assert keystore.read_anchor_bytes(key_path, BID) == b"first"
+    assert keystore.read_anchor_bytes(key_path, OTHER_BID) == b"second"
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_the_baseline_id_names_the_file_not_its_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "sub").mkdir()
+    base = tmp_path / "out.baseline"
+    first = keystore.baseline_id_for(str(base))
+    assert len(first) == keystore.BASELINE_ID_CHARS
+    assert all(char in "0123456789abcdef" for char in first)
+    assert keystore.baseline_id_for(str(tmp_path / "sub" / ".." / "out.baseline")) == first
+    assert keystore.baseline_id_for(str(tmp_path / "." / "out.baseline")) == first
+    monkeypatch.chdir(tmp_path)
+    assert keystore.baseline_id_for("out.baseline") == first  # relative, from this directory
+    assert keystore.baseline_id_for(str(tmp_path / "other.baseline")) != first
+    assert keystore.baseline_id_for(str(tmp_path / "sub" / "out.baseline")) != first
+
+
+@pytest.mark.windows_only
+def test_the_baseline_id_ignores_case_on_windows(tmp_path: Path) -> None:
+    assert keystore.baseline_id_for(str(tmp_path / "Out.Baseline")) == keystore.baseline_id_for(
+        str(tmp_path / "out.baseline")
+    )
+
+
+@pytest.mark.requires_symlinks
+def test_the_baseline_id_resolves_links_in_the_directory_part(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    os.symlink(real, tmp_path / "alias", target_is_directory=True)
+    assert keystore.baseline_id_for(str(tmp_path / "alias" / "b")) == keystore.baseline_id_for(
+        str(real / "b")
+    )
 
 
 def test_an_oversize_anchor_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "fim.key.fim-anchor").write_bytes(b"x" * 2000)
+    (tmp_path / f"fim.key.{BID}.fim-anchor").write_bytes(b"x" * 2000)
     with pytest.raises(FileTooLargeError):
-        keystore.read_anchor_bytes(str(tmp_path / "fim.key"))
+        keystore.read_anchor_bytes(str(tmp_path / "fim.key"), BID)
 
 
 @pytest.mark.requires_symlinks
 def test_the_anchor_is_neither_read_nor_written_through_a_symlink(tmp_path: Path) -> None:
     victim = tmp_path / "victim"
     victim.write_bytes(b"precious")
-    os.symlink(victim, tmp_path / "fim.key.fim-anchor")
+    os.symlink(victim, tmp_path / f"fim.key.{BID}.fim-anchor")
     with pytest.raises(FileAccessError, match="symbolic link or reparse point"):
-        keystore.read_anchor_bytes(str(tmp_path / "fim.key"))
+        keystore.read_anchor_bytes(str(tmp_path / "fim.key"), BID)
     with pytest.raises(FileAccessError, match="symbolic link or reparse point"):
-        keystore.write_anchor_bytes(str(tmp_path / "fim.key"), b"evil")
+        keystore.write_anchor_bytes(str(tmp_path / "fim.key"), BID, b"evil")
     assert victim.read_bytes() == b"precious"

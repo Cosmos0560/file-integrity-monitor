@@ -486,28 +486,35 @@ def test_error_messages_never_contain_the_key() -> None:
 # ---- the rollback anchor -------------------------------------------------------------------------
 
 DIGEST = "e3" * 32
+BID = "b1" * 8  # the id of the baseline file the anchor belongs to
+OTHER_BID = "c2" * 8
 
 
-def anchor_bytes(sequence: int = 4, digest: str = DIGEST, key: Key = KEY) -> bytes:
-    return codec.encode_anchor(key, sequence, digest)
+def anchor_bytes(
+    sequence: int = 4, digest: str = DIGEST, key: Key = KEY, baseline_id: str = BID
+) -> bytes:
+    return codec.encode_anchor(key, baseline_id, sequence, digest)
 
 
-def refused_anchor(data: bytes, key: Key = KEY) -> BaselineIntegrityError:
+def refused_anchor(data: bytes, key: Key = KEY, baseline_id: str = BID) -> BaselineIntegrityError:
     with pytest.raises(BaselineIntegrityError) as raised:
-        codec.decode_anchor(data, key)
+        codec.decode_anchor(data, key, baseline_id)
     assert raised.value.exit_code == ExitCode.INTEGRITY
     return raised.value
 
 
 def test_anchor_round_trip() -> None:
-    anchor = codec.decode_anchor(anchor_bytes(), KEY)
-    assert anchor == codec.Anchor(key_id=KEY.key_id, sequence=4, payload_sha256=DIGEST)
+    anchor = codec.decode_anchor(anchor_bytes(), KEY, BID)
+    assert anchor == codec.Anchor(
+        key_id=KEY.key_id, baseline_id=BID, sequence=4, payload_sha256=DIGEST
+    )
 
 
 def test_anchor_file_starts_with_its_fixed_header_line() -> None:
     data = anchor_bytes()
-    assert data.startswith(b"FIM-ANCHOR v1\n")
-    assert data.decode("ascii").count("\n") == 5
+    assert data.startswith(b"FIM-ANCHOR v2\n")
+    assert data.decode("ascii").count("\n") == 6
+    assert f"baseline_id {BID}\n" in data.decode("ascii")
     assert data.endswith(b"\n")
 
 
@@ -543,6 +550,24 @@ def test_anchor_made_with_another_key_names_the_key_problem() -> None:
     assert "move the old anchor file away" in error.message
 
 
+def test_an_anchor_for_another_baseline_is_refused() -> None:
+    """One key protects several baselines; each has its own anchor, bound by its baseline id."""
+    error = refused_anchor(anchor_bytes(baseline_id=OTHER_BID))
+    assert "belongs to another baseline file" in error.message
+    assert OTHER_BID in error.message
+    assert BID in error.message
+
+
+def test_an_anchor_cannot_be_retargeted_by_editing_its_baseline_id() -> None:
+    text = anchor_bytes(baseline_id=OTHER_BID).decode().replace(OTHER_BID, BID)
+    assert "MAC does not verify" in refused_anchor(text.encode()).message
+
+
+def test_an_anchor_in_the_old_one_per_key_format_says_so() -> None:
+    old = "FIM-ANCHOR v1\nkey_id " + KEY.key_id + "\n"
+    assert "old one-anchor-per-key format" in refused_anchor(old.encode()).message
+
+
 def test_anchor_with_changed_sequence_or_digest_fails_its_mac() -> None:
     text = anchor_bytes().decode()
     refused_anchor(text.replace("sequence 4", "sequence 5").encode())
@@ -551,26 +576,33 @@ def test_anchor_with_changed_sequence_or_digest_fails_its_mac() -> None:
 
 def test_a_baseline_style_mac_is_not_accepted_as_an_anchor_mac() -> None:
     """Domain separation: the same fields signed with the baseline prefix do not verify."""
-    message = b"\x00".join((KEY.key_id.encode(), b"4", DIGEST.encode()))
+    fields = (KEY.key_id.encode(), BID.encode(), b"4", DIGEST.encode())
+    message = b"\x00".join(fields)
     wrong = hmac.new(KEY.secret, b"fim-baseline\x00v1\x00" + message, hashlib.sha256).hexdigest()
     lines = (
-        f"FIM-ANCHOR v1\nkey_id {KEY.key_id}\nsequence 4\npayload_sha256 {DIGEST}\nmac {wrong}\n"
+        f"FIM-ANCHOR v2\nkey_id {KEY.key_id}\nbaseline_id {BID}\nsequence 4\n"
+        f"payload_sha256 {DIGEST}\nmac {wrong}\n"
     )
     assert "MAC does not verify" in refused_anchor(lines.encode()).message
-    right = hmac.new(KEY.secret, b"fim-anchor\x00v1\x00" + message, hashlib.sha256).hexdigest()
+    right = hmac.new(KEY.secret, b"fim-anchor\x00v2\x00" + message, hashlib.sha256).hexdigest()
     good = lines.replace(wrong, right)
-    assert codec.decode_anchor(good.encode(), KEY).sequence == 4
+    assert codec.decode_anchor(good.encode(), KEY, BID).sequence == 4
 
 
 def test_the_key_id_and_baseline_mac_domains_are_distinct() -> None:
-    domains = {b"fim-baseline\x00v1\x00", b"fim-anchor\x00v1\x00", b"fim key id v1"}
+    domains = {b"fim-baseline\x00v1\x00", b"fim-anchor\x00v2\x00", b"fim key id v1"}
     assert len(domains) == 3
 
 
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda t: t.replace("FIM-ANCHOR v1", "FIM-ANCHOR v2"),
+        lambda t: t.replace("FIM-ANCHOR v2", "FIM-ANCHOR v3"),
+        lambda t: t.replace("FIM-ANCHOR v2", "FIM-ANCHOR v1"),
+        lambda t: t.replace(f"baseline_id {BID}\n", ""),
+        lambda t: t.replace(f"baseline_id {BID}", "baseline_id XYZ"),
+        lambda t: t.replace(f"baseline_id {BID}", "baseline_id " + BID.upper()),
+        lambda t: t.replace("key_id ", "baseline_id ", 1),
         lambda t: t.replace("\n", "\r\n"),
         lambda t: t.replace("sequence 4", "sequence 04"),
         lambda t: t.replace("sequence 4", "sequence 0"),
@@ -598,15 +630,18 @@ def test_non_ascii_anchor_is_refused() -> None:
 def test_anchor_arguments_are_validated() -> None:
     for sequence in (0, -1, True, 2**53 + 1, "3"):
         with pytest.raises(ModelError):
-            codec.encode_anchor(KEY, sequence, DIGEST)  # type: ignore[arg-type]  # the bad type is the test
+            codec.encode_anchor(KEY, BID, sequence, DIGEST)  # type: ignore[arg-type]  # bad type
     for digest in ("", "ab", "G" * 64, DIGEST.upper()):
         with pytest.raises(ModelError):
-            codec.encode_anchor(KEY, 1, digest)
+            codec.encode_anchor(KEY, BID, 1, digest)
+    for baseline_id in ("", "ab", "G" * 16, BID.upper(), BID + "0"):
+        with pytest.raises(ModelError):
+            codec.encode_anchor(KEY, baseline_id, 1, DIGEST)
 
 
 def test_next_sequence_is_one_without_an_anchor_and_plus_one_with_one() -> None:
     assert codec.next_sequence(None) == 1
-    anchor = codec.decode_anchor(anchor_bytes(sequence=7), KEY)
+    anchor = codec.decode_anchor(anchor_bytes(sequence=7), KEY, BID)
     assert codec.next_sequence(anchor) == 8
 
 
@@ -615,7 +650,7 @@ def test_next_sequence_is_one_without_an_anchor_and_plus_one_with_one() -> None:
 
 def anchor_for(result: codec.EncodedBaseline) -> codec.Anchor:
     return codec.decode_anchor(
-        codec.encode_anchor(KEY, result.sequence, result.payload_sha256), KEY
+        codec.encode_anchor(KEY, BID, result.sequence, result.payload_sha256), KEY, BID
     )
 
 

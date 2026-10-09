@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from app_helpers import Workspace, make_workspace, tree_state, write_config
+from app_helpers import Workspace, anchor_file, make_workspace, tree_state, write_config
 from fim.cli import main as cli
 from fim.core.errors import (
     BaselineIntegrityError,
@@ -110,7 +110,7 @@ def test_baseline_end_to_end(ws: Workspace, capsys: pytest.CaptureFixture[str]) 
     assert "  complete: yes" in out
     assert "rollback anchor created:" in out
     assert ws.baseline.exists()
-    assert (ws.keys / "fim.key.fim-anchor").exists()
+    assert anchor_file(ws).exists()
     assert tree_state(ws.watched) == before
 
     assert cli.main(baseline_args(ws)) == 2  # exists
@@ -175,7 +175,7 @@ def test_baseline_that_hits_a_limit_exits_4_and_writes_nothing(
     assert "nothing was written" in err
     assert "--allow-incomplete" in err
     assert not ws.baseline.exists()
-    assert not (ws.keys / "fim.key.fim-anchor").exists()
+    assert not anchor_file(ws).exists()
 
 
 def test_baseline_allow_incomplete_writes_the_baseline_and_still_exits_4(
@@ -222,7 +222,7 @@ def test_baseline_shows_scan_issues_as_warnings_and_caps_them(
     )
     outcome = BaselineOutcome(
         baseline_path=str(ws.baseline),
-        anchor_path=str(ws.key_file) + ".fim-anchor",
+        anchor_path=str(anchor_file(ws)),
         key_id="0" * 16,
         sequence=1,
         records=1,
@@ -419,7 +419,7 @@ def test_a_tampered_anchor_makes_baseline_exit_3_with_a_clear_message(
 ) -> None:
     cli.main(init_key_args(ws))
     assert cli.main(baseline_args(ws)) == 0
-    anchor = ws.keys / "fim.key.fim-anchor"
+    anchor = anchor_file(ws)
     anchor.write_bytes(anchor.read_bytes().replace(b"sequence 1", b"sequence 7"))
     before = ws.baseline.read_bytes()
     capsys.readouterr()

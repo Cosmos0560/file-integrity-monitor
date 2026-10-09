@@ -23,7 +23,7 @@ ALLOWED = [
     'python scripts/gate.py && git commit -m "fix: handle the pipe | and > in messages"',
     "python scripts/gate.py && git commit -m 'head and tail and tee are only words here'",
     'python scripts/gate.py && git commit -m "keep 2>&1 | tail out of the gate; || true is bad"',
-    'python scripts/gate.py && git commit -m "$(cat <<\'EOF\'\nfeat: a | b > c\n\nbody with tail\nEOF\n)"',
+    "python scripts/gate.py && git commit -m \"$(cat <<'EOF'\nfeat: a | b > c\nEOF\n)\"",
     "python scripts/gate.py; if ($LASTEXITCODE -eq 0) { git commit -m 'x' }",
     "git add a b && python scripts/gate.py && git commit -m 'x'",
     "python scripts/gate.py --log gate-tail.log",

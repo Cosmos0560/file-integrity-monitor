@@ -9,8 +9,13 @@ The key exists as a value only inside a ``Key`` object whose text form is redact
 from a file path given on the command line or in the configuration, never from argv or the
 environment, and a key file inside a monitored root is refused (CLAUDE.md invariant 5).
 
-The rollback anchor lives in the key's directory, named after the key file with the suffix
-``.fim-anchor``; this module only moves its bytes. Its format and signature are in
+The rollback anchor lives in the key's directory, one per baseline: named after the key file,
+then the baseline id, then the suffix ``.fim-anchor``; this module only moves its bytes. The
+baseline id is the first 16 hex of SHA-256 over the baseline file's identity
+(``safe_files.path_identity``: absolute path, links in the directory part resolved, case-folded
+on Windows), so one key can protect several baselines and each has its own anchor. Moving or
+renaming a baseline file therefore starts it a new anchor (the old one is not found, which is
+only a warning). Its format and signature are in
 services/baseline_codec.py.
 """
 
@@ -30,10 +35,12 @@ from fim.fs import safe_files
 __all__ = [
     "ANCHOR_MAX_BYTES",
     "ANCHOR_SUFFIX",
+    "BASELINE_ID_CHARS",
     "KEY_BYTES",
     "KEY_HEADER",
     "Key",
     "anchor_path",
+    "baseline_id_for",
     "decode_key_file",
     "encode_key_file",
     "generate_key",
@@ -46,6 +53,8 @@ __all__ = [
 KEY_HEADER = "FIM-HMAC-KEY v1"
 KEY_BYTES = 32
 ANCHOR_SUFFIX = ".fim-anchor"
+BASELINE_ID_CHARS = 16
+_BASELINE_ID_DOMAIN = b"fim baseline path v1\x00"
 ANCHOR_MAX_BYTES = 1024
 _KEY_ID_MESSAGE = b"fim key id v1"
 _KEY_ID_CHARS = 16
@@ -152,21 +161,30 @@ def load_key(path: str, *, avoid_roots: Sequence[str] = ()) -> Key:
 # ---- the rollback anchor's file ------------------------------------------------------------------
 
 
-def anchor_path(key_path: str) -> str:
-    """Where the anchor of the key at ``key_path`` lives: next to it, with the anchor suffix."""
-    return key_path + ANCHOR_SUFFIX
+def baseline_id_for(baseline_path: str) -> str:
+    """16 hex characters naming the baseline file at ``baseline_path`` (see the module text)."""
+    identity = safe_files.path_identity(baseline_path)
+    digest = hashlib.sha256(_BASELINE_ID_DOMAIN + identity.encode("utf-8", "surrogatepass"))
+    return digest.hexdigest()[:BASELINE_ID_CHARS]
 
 
-def read_anchor_bytes(key_path: str) -> bytes | None:
+def anchor_path(key_path: str, baseline_id: str) -> str:
+    """Where the anchor of one baseline lives: next to the key, named after key and baseline."""
+    return f"{key_path}.{baseline_id}{ANCHOR_SUFFIX}"
+
+
+def read_anchor_bytes(key_path: str, baseline_id: str) -> bytes | None:
     """The anchor file's bytes, or None if there is none (a missing anchor is only a warning)."""
     try:
         return safe_files.read_own_file(
-            anchor_path(key_path), max_bytes=ANCHOR_MAX_BYTES, label="anchor file"
+            anchor_path(key_path, baseline_id), max_bytes=ANCHOR_MAX_BYTES, label="anchor file"
         )
     except FileMissingError:
         return None
 
 
-def write_anchor_bytes(key_path: str, data: bytes) -> None:
-    """Replace the anchor file next to the key (atomic, no-follow, mode 0600 on POSIX)."""
-    safe_files.write_own_file(anchor_path(key_path), data, force=True, label="anchor file")
+def write_anchor_bytes(key_path: str, baseline_id: str, data: bytes) -> None:
+    """Replace the baseline's anchor file (atomic, no-follow, mode 0600 on POSIX)."""
+    safe_files.write_own_file(
+        anchor_path(key_path, baseline_id), data, force=True, label="anchor file"
+    )

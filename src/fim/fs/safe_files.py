@@ -39,7 +39,13 @@ from fim.core.models import EntryType
 from fim.core.pathrules import Flavour, display_user_path, validate_user_path
 from fim.core.perms import entry_type, private_file_problem
 
-__all__ = ["FileTooLargeError", "ensure_can_write", "read_own_file", "write_own_file"]
+__all__ = [
+    "FileTooLargeError",
+    "ensure_can_write",
+    "path_identity",
+    "read_own_file",
+    "write_own_file",
+]
 
 _MESSAGE_PATH_CHARS = 120
 _DEFAULT_MODE = 0o600
@@ -256,6 +262,18 @@ def _check_target(path: str, force: bool, label: str) -> None:
         raise FileAccessError(f"{label} '{_shown(path)}' exists and is not a regular file")
     if not force:
         raise FileAccessError(f"{label} '{_shown(path)}' already exists; use --force to replace it")
+
+
+def path_identity(path: str) -> str:
+    """Text that names the file at ``path`` the same way however the path is spelled.
+
+    The absolute path with links in the directory part resolved and the file name kept as given
+    (the name itself is never resolved: a link there is refused elsewhere), case-folded on
+    Windows. The file need not exist. A baseline's rollback anchor is bound to this identity.
+    """
+    absolute = os.path.abspath(path)
+    directory = os.path.realpath(os.path.dirname(absolute))
+    return os.path.normcase(os.path.join(directory, os.path.basename(absolute)))
 
 
 def _check_writable(path: str, force: bool, avoid_roots: Sequence[str], label: str) -> None:

@@ -115,7 +115,7 @@ def _message(reasons: Sequence[str]) -> str:
         + "; ".join(reasons)
         + ".\nCLAUDE.md section 3: never pipe, filter or redirect the gate output. Run it plainly "
         "(python scripts/gate.py [--full]), or write a log with --log FILE, which keeps the exit "
-        "status, or commit with: python scripts/gate.py && git commit -m \"...\". "
+        'status, or commit with: python scripts/gate.py && git commit -m "...". '
         "Run other commands separately."
     )
 

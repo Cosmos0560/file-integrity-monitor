@@ -83,6 +83,14 @@ it is still bounded (measured in Phase 6).
   Residual risk for Limitations: an attacker who can delete files in the key directory can remove
   the anchor, which is only warned about. This supersedes the rollback bullet above (the
   `created_at`/`sequence` printout stays). Implemented in Phase 3.
+- **D3 note (v0.3.5, one anchor per baseline):** the anchor is specific to one baseline file, so
+  one key can protect several baselines. Its name is `<key file>.<baseline id>.fim-anchor` in the
+  key's directory, where the baseline id is the first 16 hex of SHA-256 over the baseline file's
+  identity (absolute path, links in the directory part resolved, case-folded on Windows), and the
+  id is also inside the signed anchor, so an anchor copied to another baseline's name is refused.
+  Consequence, documented: moving or renaming a baseline file leaves it without an anchor (a
+  warning) until the next `fim baseline` writes one. The anchor format is `FIM-ANCHOR v2`; a v1
+  anchor from Phase 3 is refused with a message saying so.
 
 ### D4 - Policy snapshot: what `check` trusts
 **Recommendation:** the effective policy (roots, include/exclude globs, per-path severity,
@@ -693,3 +701,11 @@ report written. Tagging and pushing are yours.
   (d) FAT/exFAT fallback, owner decision: when the hard-link publish fails because the file system
   has no hard links, `safe_files` creates the final file directly with `O_CREAT | O_EXCL` and an
   fsync (section 1.4 and the Limitations list updated); this replaces deviation (8) of v0.3.4.
+  (c) anchor per baseline, owner decision: the anchor is bound to one baseline file instead of one
+  key (see the D3 note); this replaces deviation (1) of v0.3.4. Format changed to `FIM-ANCHOR v2`
+  (adds `baseline_id`, signed); the Phase 3 `v1` format was never released.
+  (e) `fim baseline` checks every configured root (exists, is a file or a directory, is not a link
+  or reparse point) before reading the key, the anchor or scanning, so it fails fast with exit 2;
+  the check after the scan stays for a root that vanishes mid-scan. A root that is a single
+  regular file is still accepted (a scanner feature since Phase 2), which is wider than the
+  owner's wording "is a directory".

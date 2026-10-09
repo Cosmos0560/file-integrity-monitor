@@ -2,7 +2,8 @@
 
 ``run_baseline`` follows PLAN.md section 1.2: read the configuration through fs/safe_files.py,
 build the policy, load the key, scan, refuse if a configured root is unavailable, encode and sign,
-write the baseline atomically, then write the rollback anchor next to the key (D3 amendment).
+write the baseline atomically, then write the rollback anchor (D3 amendment) next to the key, one
+per baseline file.
 The new sequence number is the verified anchor's plus one, or 1 when there is no anchor.
 
 ``read_verified_baseline`` is the other direction: read the baseline (the size cap is checked
@@ -111,7 +112,6 @@ class InitKeyRequest:
 class InitKeyOutcome:
     key_path: str
     key_id: str
-    anchor_path: str
 
 
 def run_init_key(request: InitKeyRequest) -> InitKeyOutcome:
@@ -122,7 +122,7 @@ def run_init_key(request: InitKeyRequest) -> InitKeyOutcome:
         roots = _root_texts(read_config(request.config_path))
     path = resolve_path_argument(request.key_file, home)
     key = keystore.init_key(path, force=request.force, avoid_roots=roots)
-    return InitKeyOutcome(key_path=path, key_id=key.key_id, anchor_path=keystore.anchor_path(path))
+    return InitKeyOutcome(key_path=path, key_id=key.key_id)
 
 
 # ---- baseline ------------------------------------------------------------------------------------
@@ -183,12 +183,12 @@ def _refuse_incomplete(issues: tuple[ScanIssue, ...]) -> None:
     )
 
 
-def _load_anchor_sequence(key: Key, key_path: str) -> tuple[int, bool]:
+def _load_anchor_sequence(key: Key, key_path: str, baseline_id: str) -> tuple[int, bool]:
     """The next sequence number and whether an anchor existed. A bad anchor raises (exit 3)."""
-    raw = keystore.read_anchor_bytes(key_path)
+    raw = keystore.read_anchor_bytes(key_path, baseline_id)
     if raw is None:
         return next_sequence(None), False
-    return next_sequence(decode_anchor(raw, key)), True
+    return next_sequence(decode_anchor(raw, key, baseline_id)), True
 
 
 def run_baseline(
@@ -217,7 +217,8 @@ def run_baseline(
         baseline_path, force=request.force, avoid_roots=roots, label="baseline file"
     )
     key = keystore.load_key(key_path, avoid_roots=roots)
-    sequence, anchor_existed = _load_anchor_sequence(key, key_path)
+    baseline_id = keystore.baseline_id_for(baseline_path)
+    sequence, anchor_existed = _load_anchor_sequence(key, key_path, baseline_id)
 
     result = scan(policy, clock, view=view)
     if not result.complete and not request.allow_incomplete:
@@ -251,10 +252,12 @@ def run_baseline(
     # The baseline is written first: if the anchor cannot be, the next run with --force repeats
     # the same sequence number and fixes it, whereas the other order would leave an anchor that
     # names a baseline that does not exist.
-    keystore.write_anchor_bytes(key_path, encode_anchor(key, sequence, encoded.payload_sha256))
+    keystore.write_anchor_bytes(
+        key_path, baseline_id, encode_anchor(key, baseline_id, sequence, encoded.payload_sha256)
+    )
     return BaselineOutcome(
         baseline_path=baseline_path,
-        anchor_path=keystore.anchor_path(key_path),
+        anchor_path=keystore.anchor_path(key_path, baseline_id),
         key_id=encoded.key_id,
         sequence=sequence,
         records=len(result.records),
@@ -302,12 +305,14 @@ def read_verified_baseline(
             f"{limits.max_baseline_bytes} byte limit"
         ) from None
     decoded = decode_baseline(data, key, max_bytes=limits.max_baseline_bytes)
-    raw_anchor = keystore.read_anchor_bytes(key_path)
+    baseline_id = keystore.baseline_id_for(baseline_path)
+    raw_anchor = keystore.read_anchor_bytes(key_path, baseline_id)
     if raw_anchor is None:
         warning = (
-            f"no rollback anchor found next to the key ({keystore.anchor_path(key_path)}): "
+            "no rollback anchor found for this baseline "
+            f"({keystore.anchor_path(key_path, baseline_id)}): "
             "an older baseline put back in place could not be detected"
         )
         return VerifiedBaseline(decoded, (warning,))
-    verify_against_anchor(decode_anchor(raw_anchor, key), decoded)
+    verify_against_anchor(decode_anchor(raw_anchor, key, baseline_id), decoded)
     return VerifiedBaseline(decoded, ())
