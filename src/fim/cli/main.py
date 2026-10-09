@@ -1,7 +1,7 @@
 """Command line entry point. This is the only place that prints.
 
-Commands so far: ``init-key`` and ``baseline``. Every error the tool raises on purpose is a
-``FimError`` and leaves through here as one line on stderr and its exit code (PLAN.md section
+Commands so far: ``init-key``, ``baseline`` and ``check``. Every error the tool raises on purpose
+is a ``FimError`` and leaves through here as one line on stderr and its exit code (PLAN.md section
 1.5); the code never lets a traceback carry a file name to the terminal. Everything printed from
 the filesystem or the user's paths goes through the sanitiser first.
 """
@@ -21,7 +21,9 @@ from fim.app.baseline import (
     run_baseline,
     run_init_key,
 )
+from fim.app.check import FORMATS, CheckRequest, run_check
 from fim.core.errors import ExitCode, FimError
+from fim.core.models import Severity
 from fim.core.pathrules import display_user_path
 from fim.platform.clock import SystemClock
 from fim.platform.hostinfo import path_flavour
@@ -82,6 +84,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="if a limit stops the scan, still write the baseline (marked incomplete, exit 4)",
     )
     baseline.set_defaults(handler=_baseline)
+
+    check = commands.add_parser(
+        "check",
+        allow_abbrev=False,
+        help="compare the monitored paths with a signed baseline and report the changes",
+        description=(
+            "Verify the baseline (signature, then rollback anchor), rescan the paths it names and "
+            "report what changed. Exit codes: 0 clean, 1 findings, 2 error, 3 baseline integrity "
+            "failure, 4 incomplete."
+        ),
+    )
+    check.add_argument(
+        "--baseline", required=True, metavar="PATH", help="baseline to check against"
+    )
+    check.add_argument(
+        "--key-file", metavar="PATH", help="key file (overrides key_file in the configuration)"
+    )
+    check.add_argument(
+        "--config",
+        metavar="FILE",
+        help="optional: the key location and a policy drift check (never changes what is scanned)",
+    )
+    check.add_argument(
+        "--format", choices=FORMATS, default="table", help="report format (default: table)"
+    )
+    check.add_argument(
+        "--output", metavar="PATH", help="write the report to this new file instead of stdout"
+    )
+    check.add_argument("--force", action="store_true", help="replace an existing --output file")
+    check.add_argument(
+        "--min-severity",
+        choices=[severity.label for severity in Severity],
+        default=Severity.INFO.label,
+        help="hide findings below this severity (default: info, nothing hidden)",
+    )
+    check.set_defaults(handler=_check)
     return parser
 
 
@@ -139,6 +177,31 @@ def _baseline(args: argparse.Namespace) -> int:
         SystemClock(),
     )
     _print_baseline(outcome)
+    return int(outcome.exit_code)
+
+
+def _check(args: argparse.Namespace) -> int:
+    outcome = run_check(
+        CheckRequest(
+            baseline_path=args.baseline,
+            key_file=args.key_file,
+            config_path=args.config,
+            output_format=args.format,
+            output_path=args.output,
+            force=args.force,
+            min_severity=Severity.from_label(args.min_severity),
+        ),
+        SystemClock(),
+    )
+    if outcome.text is not None:
+        print(outcome.text, end="")
+    if outcome.output_path is not None:
+        total = sum(count for _, count in outcome.report.summary.by_kind)
+        print(f"report written: {_shown(outcome.output_path)} ({total} findings)")
+        for note in outcome.notes:
+            _warn(note)
+        if not outcome.report.complete:
+            _warn("the check was incomplete: the result may miss changes")
     return int(outcome.exit_code)
 
 

@@ -338,6 +338,9 @@ def test_no_option_takes_a_key_value() -> None:
             "--force",
             "--baseline",
             "--allow-incomplete",
+            "--format",
+            "--output",
+            "--min-severity",
         }
 
 

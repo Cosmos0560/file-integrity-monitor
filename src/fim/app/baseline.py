@@ -54,6 +54,7 @@ __all__ = [
     "VerifiedBaseline",
     "read_config",
     "read_verified_baseline",
+    "resolve_key_path",
     "resolve_path_argument",
     "run_baseline",
     "run_init_key",
@@ -90,7 +91,8 @@ def _root_texts(config: Config) -> tuple[str, ...]:
     return tuple(root.path.text for root in config.policy.roots)
 
 
-def _key_path(override: str | None, config: Config | None, home: UserPath | None) -> str:
+def resolve_key_path(override: str | None, config: Config | None, home: UserPath | None) -> str:
+    """The key file path: the command line wins over the configuration; neither is an error."""
     if override is not None:
         return resolve_path_argument(override, home)
     if config is not None and config.key_file is not None:
@@ -210,7 +212,7 @@ def run_baseline(
     # Fail fast, before the key, the anchor or any scan: a missing, linked or unreadable root
     # would make the baseline a false one.
     _refuse_unavailable_roots(check_roots(policy, view=view))
-    key_path = _key_path(request.key_file, config, home)
+    key_path = resolve_key_path(request.key_file, config, home)
     baseline_path = resolve_path_argument(request.baseline_path, home)
     # Fail before the scan, not after it, for the cheap reasons.
     safe_files.ensure_can_write(

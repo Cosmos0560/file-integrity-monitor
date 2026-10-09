@@ -42,6 +42,7 @@ from fim.core.perms import entry_type, private_file_problem
 __all__ = [
     "FileTooLargeError",
     "ensure_can_write",
+    "ensure_outside_roots",
     "path_identity",
     "read_own_file",
     "write_own_file",
@@ -279,6 +280,11 @@ def path_identity(path: str) -> str:
 def _check_writable(path: str, force: bool, avoid_roots: Sequence[str], label: str) -> None:
     _check_path(path, avoid_roots, label)
     _check_target(path, force, label)
+
+
+def ensure_outside_roots(path: str, avoid_roots: Sequence[str], *, label: str) -> None:
+    """Refuse ``path`` if it is a bad path or lies inside one of ``avoid_roots`` (no I/O on it)."""
+    _check_path(path, avoid_roots, label)
 
 
 def ensure_can_write(

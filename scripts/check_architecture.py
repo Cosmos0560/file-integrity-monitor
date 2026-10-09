@@ -85,6 +85,15 @@ LAYERS: Mapping[str, int] = {
 # violation (A002). Phases that add modules extend this table with the edges they need.
 SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     "fim.core.canonical": frozenset({"fim.core.errors"}),
+    "fim.core.diff": frozenset(
+        {
+            "fim.core.canonical",
+            "fim.core.limits",
+            "fim.core.models",
+            "fim.core.pathrules",
+            "fim.core.perms",
+        }
+    ),
     "fim.core.errors": frozenset({"fim.core.sanitize"}),
     "fim.core.globs": frozenset({"fim.core.errors", "fim.core.limits", "fim.core.sanitize"}),
     "fim.core.limits": frozenset({"fim.core.errors"}),
@@ -105,6 +114,8 @@ SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     ),
     # The codec signs with the keystore's Key; the keystore knows nothing of the codec.
     "fim.services.baseline_codec": frozenset({"fim.services.keystore"}),
+    # check reuses the configuration, key and verified-baseline helpers of the baseline use case.
+    "fim.app.check": frozenset({"fim.app.baseline"}),
 }
 
 # module -> the only modules that may import it (A013).
