@@ -35,7 +35,7 @@ from fim.core.perms import (
 )
 from fim.core.policy import build_policy
 from fim.fs.observe import HashResult
-from fim.services.scanner import scan
+from fim.services.scanner import check_roots, scan
 
 POSIX = Flavour.POSIX
 WINDOWS = Flavour.WINDOWS
@@ -1002,3 +1002,58 @@ def test_the_real_view_looks_every_function_up_on_the_observe_module_at_call_tim
     assert calls[0][1] == ("p1",)
     assert calls[3][1] == ("p4", 9)
     assert dict(calls[4][1][2:]) == {"follow": True, "max_bytes": 7, "should_stop": stop}
+
+
+# ---- check_roots: the cheap check that runs before a scan ---------------------------------------
+
+
+def test_check_roots_accepts_directories_and_files() -> None:
+    fs = FakeFs()
+    fs.dir("/data")
+    fs.file("/etc/hosts", b"x")
+    assert check_roots(policy_for(root("/data"), root("/etc/hosts")), view=fs) == ()
+
+
+def test_check_roots_reports_every_unavailable_root_with_its_reason() -> None:
+    fs = FakeFs()
+    fs.dir("/real")
+    fs.add("/link", "symlink", target="/real", points_to="/real", mode=0o777)
+    fs.add("/pipe", "fifo")
+    fs.lstat_errors["/denied"] = DENIED
+    issues = check_roots(
+        policy_for(root("/real"), root("/gone"), root("/link"), root("/pipe"), root("/denied")),
+        view=fs,
+    )
+    details = {issue.path: issue.detail for issue in issues}
+    assert set(details) == {"/gone", "/link", "/pipe", "/denied"}
+    assert all(issue.kind is IssueKind.ROOT_UNAVAILABLE for issue in issues)
+    assert "not found" in details["/gone"]
+    assert "link or reparse point; configure the real path" in details["/link"]
+    assert "neither a file nor a directory" in details["/pipe"]
+    assert "cannot be read (EACCES)" in details["/denied"]
+
+
+def test_check_roots_flags_a_windows_junction() -> None:
+    fs = FakeFs(sep="\\")
+    fs.add(
+        r"C:\mount",
+        "reparse",
+        attributes=DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT,
+        tag=IO_REPARSE_TAG_MOUNT_POINT,
+        uid=None,
+        gid=None,
+    )
+    issues = check_roots(policy_for(root(r"C:\mount", WINDOWS)), view=fs)
+    assert [issue.detail for issue in issues] == [
+        "the monitored path is a link or reparse point; configure the real path"
+    ]
+
+
+def test_check_roots_agrees_with_what_a_scan_would_say() -> None:
+    fs = FakeFs()
+    fs.dir("/real")
+    fs.add("/link", "symlink", target="/real", points_to="/real", mode=0o777)
+    policy = policy_for(root("/link"), root("/gone"))
+    assert check_roots(policy, view=fs) == tuple(
+        issue for issue in run(fs, policy).issues if issue.kind is IssueKind.ROOT_UNAVAILABLE
+    )

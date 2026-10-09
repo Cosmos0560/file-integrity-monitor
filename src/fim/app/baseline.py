@@ -43,7 +43,7 @@ from fim.services.baseline_codec import (
 )
 from fim.services.config import Config, load_config
 from fim.services.keystore import Key
-from fim.services.scanner import FileSystemView, scan
+from fim.services.scanner import FileSystemView, check_roots, scan
 
 __all__ = [
     "BaselineOutcome",
@@ -189,6 +189,9 @@ def run_baseline(
     config = read_config(request.config_path)
     policy = config.policy
     roots = _root_texts(config)
+    # Fail fast, before the key, the anchor or any scan: a missing, linked or unreadable root
+    # would make the baseline a false one.
+    _refuse_unavailable_roots(check_roots(policy, view=view))
     key_path = _key_path(request.key_file, config, home)
     baseline_path = resolve_path_argument(request.baseline_path, home)
     # Fail before the scan, not after it, for the cheap reasons.
@@ -199,7 +202,7 @@ def run_baseline(
     sequence, anchor_existed = _load_anchor_sequence(key, key_path)
 
     result = scan(policy, clock, view=view)
-    _refuse_unavailable_roots(result.issues)
+    _refuse_unavailable_roots(result.issues)  # a root that vanished during the scan
 
     header = BaselineHeader(
         tool_version=__version__,

@@ -588,3 +588,83 @@ def test_the_key_appears_in_no_output_exception_baseline_anchor_or_log(
         assert secret_hex not in text
         assert secret_hex.upper() not in text
     assert caplog.records == []
+
+
+# ---- the roots are checked before anything else --------------------------------------------------
+
+
+def no_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        app, "scan", lambda *_a, **_k: pytest.fail("the scan ran for an unavailable root")
+    )
+
+
+def test_a_missing_root_fails_fast_before_the_key_the_anchor_or_the_scan(
+    ws: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_scan(monkeypatch)
+    write_config(ws.config, [ws.watched, ws.base / "gone"])
+    # There is no key file at all: the root problem must be what is reported.
+    with pytest.raises(ConfigError, match="not found") as raised:
+        run(ws)
+    assert raised.value.exit_code == ExitCode.ERROR
+    assert not ws.key_file.exists()
+
+
+@pytest.mark.requires_symlinks
+def test_a_link_root_fails_fast_before_the_scan(
+    ws: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_key(ws)
+    no_scan(monkeypatch)
+    link = ws.base / "link"
+    os.symlink(ws.watched, link, target_is_directory=True)
+    write_config(ws.config, [link])
+    with pytest.raises(ConfigError, match="link or reparse point"):
+        run(ws)
+
+
+@pytest.mark.windows_only
+def test_a_junction_root_fails_fast_before_the_scan(
+    ws: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_key(ws)
+    no_scan(monkeypatch)
+    junction = ws.base / "junction"
+    winhelp.make_junction(junction, ws.watched)
+    write_config(ws.config, [junction])
+    with pytest.raises(ConfigError, match="link or reparse point"):
+        run(ws)
+
+
+def test_every_unavailable_root_is_listed_in_one_message(ws: Workspace) -> None:
+    write_config(ws.config, [ws.base / "gone1", ws.base / "gone2"])
+    with pytest.raises(ConfigError) as raised:
+        run(ws)
+    assert raised.value.message.count("not found") == 2
+
+
+def test_a_root_that_vanishes_during_the_scan_is_still_refused(
+    ws: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fim.services.scanner import ObservedFileSystem
+
+    make_key(ws)
+
+    class Vanishing(ObservedFileSystem):
+        calls = 0
+
+        def lstat(self, path: str) -> Any:
+            type(self).calls += 1
+            if type(self).calls > 1:  # the first call is the pre-scan check
+                return observe_not_found()
+            return super().lstat(path)
+
+    def observe_not_found() -> Any:
+        from fim.fs.observe import FsProblem
+
+        return FsProblem("ENOENT", vanished=True, denied=False)
+
+    with pytest.raises(ConfigError, match="a monitored path is unavailable"):
+        app.run_baseline(request(ws), FakeClock(), view=Vanishing())
+    assert not ws.baseline.exists()

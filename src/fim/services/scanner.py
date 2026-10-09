@@ -52,7 +52,7 @@ from fim.core.policy import RootRules, compile_rules, component_key
 from fim.fs import observe
 from fim.fs.observe import DirListing, FsProblem, HashResult, RawStat
 
-__all__ = ["FileSystemView", "ObservedFileSystem", "scan"]
+__all__ = ["FileSystemView", "ObservedFileSystem", "check_roots", "inspect_root", "scan"]
 
 
 class FileSystemView(Protocol):
@@ -123,6 +123,41 @@ def _join(base: str, separator: str, name: str) -> str:
     return base + name if base.endswith(separator) else base + separator + name
 
 
+def inspect_root(view: FileSystemView, text: str) -> tuple[RawStat, EntryType] | str:
+    """What a configured root is, or why it cannot be monitored (the text of the scan issue).
+
+    A root must exist and be a regular file or a directory, and not a link or reparse point.
+    """
+    found = view.lstat(text)
+    if isinstance(found, FsProblem):
+        reason = "not found" if found.vanished else f"cannot be read ({found.errno_name})"
+        return f"the monitored path {reason}"
+    kind = entry_type(found.st_mode, found.file_attributes, found.reparse_tag)
+    if kind in (EntryType.SYMLINK, EntryType.REPARSE):
+        return "the monitored path is a link or reparse point; configure the real path"
+    if kind not in (EntryType.DIR, EntryType.FILE):
+        return "the monitored path is neither a file nor a directory"
+    return found, kind
+
+
+def check_roots(policy: Policy, *, view: FileSystemView | None = None) -> tuple[ScanIssue, ...]:
+    """A ``root_unavailable`` issue for every configured root that cannot be scanned.
+
+    This is the cheap check ``baseline`` runs before the scan, so it fails fast.
+    """
+    fs = view if view is not None else ObservedFileSystem()
+    issues: list[ScanIssue] = []
+    for root in policy.roots:
+        inspected = inspect_root(fs, root.path.text)
+        if isinstance(inspected, str):
+            issues.append(
+                ScanIssue(
+                    path=root.path.display(), kind=IssueKind.ROOT_UNAVAILABLE, detail=inspected
+                )
+            )
+    return tuple(issues)
+
+
 class _Scan:
     """The state of one run."""
 
@@ -183,26 +218,11 @@ class _Scan:
         root = rules.root
         text = root.path.text
         shown = root.path.display()
-        found = self.fs.lstat(text)
-        if isinstance(found, FsProblem):
-            reason = "not found" if found.vanished else f"cannot be read ({found.errno_name})"
-            self.issue(IssueKind.ROOT_UNAVAILABLE, shown, f"the monitored path {reason}")
+        inspected = inspect_root(self.fs, text)
+        if isinstance(inspected, str):
+            self.issue(IssueKind.ROOT_UNAVAILABLE, shown, inspected)
             return
-        kind = entry_type(found.st_mode, found.file_attributes, found.reparse_tag)
-        if kind in (EntryType.SYMLINK, EntryType.REPARSE):
-            self.issue(
-                IssueKind.ROOT_UNAVAILABLE,
-                shown,
-                "the monitored path is a link or reparse point; configure the real path",
-            )
-            return
-        if kind not in (EntryType.DIR, EntryType.FILE):
-            self.issue(
-                IssueKind.ROOT_UNAVAILABLE,
-                shown,
-                "the monitored path is neither a file nor a directory",
-            )
-            return
+        found, kind = inspected
         pending: list[_Directory] = []
         visited: set[tuple[int, int]] = set()
         top = self.record_entry(rules, (), text, found, kind, pending, visited, found.dev)
