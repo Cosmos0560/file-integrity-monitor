@@ -5,20 +5,19 @@ section 2. The last entry is what a new session reads first.
 
 ## In progress
 
-Nothing is in progress. Phase 5 is complete, and the fixes after CI run #6 (the sandbox path rule,
-the WSL Linux check, the slow marks and the documentation of the owner's decisions) are committed
-locally and not pushed. Phase 6 (bench, threat model, README, release checks) has not been started
-and waits for the owner. Phase 6 starts from `docs/siem-mapping.md` and `docs/report-schema.md`
-(documented output), `app/watch.py` and `app/demo.py` (what the README shows with real output), and
-the Limitations list in PLAN.md section 4. Before any phase is reported done: the full gate on
-Windows and, through WSL, on Linux (CLAUDE.md section 3).
-
-Open question for the owner: CLAUDE.md section 4 invariant 3 lists "Windows reserved device names"
-without saying that they are refused for Windows paths only (PLAN.md changelog v0.3.8, item 2).
+Nothing is in progress. Phase 6 is complete and committed locally; nothing was pushed or
+tagged. What is left is yours: push, check Actions (the first run with `actions/checkout@v5`
+and `actions/setup-python@v6`, and with Phase 6's tests on Python 3.11 to 3.13), tag v1.0.0
+and publish the release. The open questions are at the end of the Phase 6 entry. Before any
+later phase or fix is reported done: the full gate on Windows and, through WSL, on Linux
+(CLAUDE.md section 3).
 
 Accepted by the owner: the deviations of v0.3.7 and v0.3.6 (on 2026-10-10, PLAN.md changelog
 v0.3.8), the Phase 3 deviations of v0.3.4 except the incomplete-scan one (changed in v0.3.5), all
 Phase 2 deviations (v0.3.2, v0.3.3).
+
+Resolved in Phase 6, Step 0: the wording of invariant 3 (Windows name rules apply to
+Windows paths only).
 
 ## Phase 1 - Foundation, gate, CI, pure core (2026-10-08)
 
@@ -215,4 +214,403 @@ Tests added: 0 (2425 in the full gate on Windows, 2411 on Linux; the default gat
 Real coverage: full gate 100.00% on Windows (2425 passed, 18 skipped) and on Linux (2411 passed, 17 skipped); default gate 94.88%
 Known gaps: Linux ran on Python 3.14.4 only (3.11 to 3.13 are CI's); the default gate no longer covers most of app/watch.py and app/demo.py; invariant 3 wording; first CI run with these commits not yet seen
 Deviations from PLAN.md: none new (the owner's decisions are changelog v0.3.8)
+```
+
+## Phase 6 - Hardening, measurement, docs, release (2026-10-10)
+
+Commits (oldest first, each through the gate on its own tree; the later files were set aside
+while it ran): `31fc13e` CLAUDE.md invariant 3; `314fe7b` smoke tests; `f597b1e` CI actions;
+`fb242b5` `scripts/bench.py`; `207e1f0` `MAX_BASELINE_BYTES` to 128 MiB; `be90729` version 1.0.0
+and the changelog; `b45cd2f` bench rows printed as they are measured; `8e7975b` the documents
+and `tests/test_docs.py`; and the commit that adds this report. Nothing was pushed or tagged.
+
+### Step 0
+
+- **(a) Invariant 3.** CLAUDE.md now says the Windows name rules (reserved device names, a colon
+  in a name, `<>"|?*`, trailing space or dot, `\` as a separator, drive-relative `C:foo`) are
+  enforced for Windows paths only, and why; and, from reading `core/pathrules.py`, that both
+  flavours refuse UNC and device syntax, a leading drive letter such as `C:` (on POSIX as "looks
+  like a Windows drive path"), URL-like text, `..` and unsafe characters. My first wording was
+  too broad (it said drive-relative paths were Windows-only); I corrected it from the code before
+  committing.
+- **(b) Smoke tests.** `test_smoke_watch_reports_a_change_once_and_stops_after_two_cycles` (0.10 s)
+  and `test_smoke_demo_runs_finds_the_changes_refuses_the_tampered_baseline_and_cleans_up`
+  (0.20 s) are in the default gate; the other end-to-end tests stay `slow`. The default run's
+  branch coverage went from 94.88% back to 98.47% (`app/watch.py` 28.24% to 76.85%, `app/demo.py`
+  48.25% to 95.61%).
+- **(c) CI actions.** `actions/checkout@v5`, `actions/setup-python@v6`, the policy test updated,
+  nothing else in the workflow changed. I cannot see GitHub from here, so whether the Node 20
+  warning is gone is for you to confirm on CI.
+
+### The measurements (`docs/performance.md`)
+
+One machine: Intel Core Ultra 7 155U, 31.5 GiB, NVMe SSD, Windows 11, Python 3.13.14, real-time
+protection on; `python scripts/bench.py all`, commit `b45cd2f`.
+
+| What | Result |
+|---|---|
+| Later `baseline` / `check`, 100 000 files of 1 KiB (101 021 records) | 25.46 s / 27.49 s (3 968 / 3 675 records a second) |
+| First `baseline` of those just-written files | 1212.18 s (12 ms a file); 14.41 s for 1 000, 123.78 s for 10 000 |
+| One 256 MiB file | 0.28 s, 905 MiB/s (hashlib over memory: 1 825 MiB/s) |
+| `tracemalloc` peak, `baseline` / `check` of 100 000 files | 143.8 MiB / 165.7 MiB |
+| Peak working set, `check` with a 119.1 MiB baseline (400 409 records) | 740.8 MiB |
+
+Things the run taught me that I did not expect, stated plainly:
+
+- **The default 900 s time budget stopped the first baseline of the 100 000-file tree.** My
+  first full run printed nothing: the script crashed on the tool's own `LimitReachedError`
+  (exit code 4, nothing written) and printed its tables only at the end, so about 40 minutes
+  were lost. I kept the error as evidence, made the script print each row as it is measured,
+  gave its trees the ceiling budget (3 600 s) and ran again. The cause is most likely the
+  system's real-time protection scanning each new file on first open (12 to 14 ms a file against
+  0.25 to 0.34 ms later); I did not turn it off, because that is a security setting, so it is the
+  likely cause, not a proven one. The README Limitations say so.
+- **One later baseline run of the 100 000-file tree took 470.07 s** (the others 23.40 s and
+  25.46 s). I do not know why; a rescan after a definition update would fit. The table shows the
+  range and the doc says so.
+- **Loading a baseline peaks at 6.1 to 6.5 times its size, and a whole `check` at the same
+  figure.** The first design allowed 256 MiB: the largest measured size, 238.2 MiB, needed
+  1453.6 MiB.
+
+### D11 decision
+
+`MAX_BASELINE_BYTES` is **128 MiB** (default and ceiling). Criterion, stated in
+`docs/performance.md` so you can overrule it: under 1 GiB for the largest baseline the tool
+accepts, because `watch` pays the peak every cycle on a laptop. After the change, a 119.1 MiB
+baseline peaked at 740.8 MiB. Consequences: limits are in the policy digest and in every baseline,
+so the golden payload, its file hash and the pinned digest were regenerated (the old and new
+golden payloads differ in exactly three values: the limit in two places and the digest) and a
+baseline written under 256 MiB is refused as above its ceiling (a test pins that). The
+`MAX_FILES` ceiling of 1 000 000 is unchanged and can now be unreachable for a given tree (the
+byte limit fires first, with a message and nothing written); I left it for your decision. I did
+not optimise the load path: the code holds several copies of the file's bytes and the parsed
+document next to the records, which could lower the peak without touching the limit, but it is
+the most security-critical module and you asked for the ceiling.
+
+### Review pass of the four security-critical modules
+
+`fs/observe.py`, `fs/safe_files.py`, `services/baseline_codec.py` and `core/sanitize.py` were read
+in full again with the questions: can a byte of a baseline reach a parser before the MAC verified
+(no: `parse_payload` has one caller, `decode_baseline`, after `hmac.compare_digest`; a test
+pins the order); can a write go through a link or over an existing file (no: exclusive create,
+hard-link publish, `os.replace` on a link replaces the link, targets that are links are refused);
+can a hostile name reach output unescaped (no); what happens when a file changes, is swapped, or
+disappears mid-read (retry once, then `unstable`/`vanished`). **No code defect was found, so no
+test-first fix was needed.** What the pass did find, now in the threat model, README Limitations
+and PLAN changelog v0.4, and not changed:
+
+1. On Windows the open of a monitored file has no no-follow flag; the device and inode
+   comparison with the earlier `lstat` is the only guard against a link swapped in between.
+2. A crash between creating and removing a temporary file leaves `.fim-<random>.tmp` in the
+   target's directory; for a key that is a copy of the key.
+3. `key_file` in the unauthenticated configuration is trusted: someone who can edit the
+   configuration and the baseline can point `check` at a key of their own.
+4. The sanitiser escapes by Unicode category, so letters and symbols that render blank (Hangul
+   filler U+3164, Braille blank U+2800), combining marks and variation selectors pass through. That
+   is D10 as written ("everything else stays readable") and is documented under "confusable
+   glyphs"; escaping them would be a small decision for a later release (Unicode has a
+   `Default_Ignorable_Code_Point` property for this; Python's `unicodedata` does not expose it).
+5. Baselines made under a higher ceiling are refused after a ceiling is lowered (see above).
+
+### Documents
+
+README (what it is and is not, install, `fim demo`, a first real run, every command and option,
+configuration, limits, exit codes, formats, the mini-siem section, "What the tool reads and
+writes", a 24-row claim-to-evidence table, Limitations with every item you listed plus the PLAN's,
+performance, development), `docs/threat-model.md` (17 threats, each with a test or an
+explicit "not testable"), `docs/performance.md`, `CHANGELOG.md` 1.0.0, SECURITY.md updated.
+Real output only: Windows transcripts and a short Linux one from WSL, the local temporary
+directory shown as `<TMP>` everywhere (`tests/test_docs.py` fails if a document names a local
+path or the user name). `docs/siem-mapping.md` carried a local path and a 0.1.0 sample line: the
+sample line was regenerated from the 1.0.0 build and redacted, and the stored-attribute listing
+redacted; the mini-siem ingest paste is unchanged and says it was done once, with 0.1.0.
+
+### Release checks (temporary venv outside the repository, Python 3.11.15, deleted afterwards)
+
+Commit `8e7975b`, cloned fresh. Python 3.11 was used on purpose: it is the lowest the wheel
+claims. The script that ran it is not committed (it is a one-off driver); the output below is
+its real output, with the long package and wheel lists shortened and marked.
+
+```
+===== clean checkout of the commit =====
+$ git clone --quiet C:/Studies/Projects/file-integrity-monitor <RELEASE>\src
+
+[exit code 0]
+
+===== commit =====
+$ git -C <RELEASE>\src log --oneline -1
+8e7975b docs: README, threat model, performance report and the tests that keep them true
+[exit code 0]
+
+===== status of the checkout =====
+$ git -C <RELEASE>\src status --short
+
+[exit code 0]
+
+===== tool venv =====
+$ <PYTHON-3.11.15> -m venv <RELEASE>\tools
+
+[exit code 0]
+
+===== install build, pip-audit, bandit =====
+$ <RELEASE>\tools\Scripts\python.exe -m pip install --quiet build pip-audit bandit
+
+[notice] A new release of pip is available: 24.0 -> 26.2.1
+[notice] To update, run: <RELEASE>\tools\Scripts\python.exe -m pip install --upgrade pip
+[exit code 0]
+
+===== tool versions =====
+$ <RELEASE>\tools\Scripts\python.exe -m pip list --format=freeze --disable-pip-version-check
+[... 36 installed packages: build 1.6.1, pip-audit 2.10.1, bandit 1.9.4 and their dependencies ...]
+[exit code 0]
+
+===== python -m build =====
+$ <RELEASE>\tools\Scripts\python.exe -m build <RELEASE>\src
+Successfully built file_integrity_monitor-1.0.0.tar.gz and file_integrity_monitor-1.0.0-py3-none-any.whl
+  - hatchling>=1.25
+  - hatchling==1.32.4
+  - hatchling>=1.25
+  - hatchling==1.32.4
+[exit code 0]
+
+dist contents: ['file_integrity_monitor-1.0.0-py3-none-any.whl', 'file_integrity_monitor-1.0.0.tar.gz']
+
+===== install venv =====
+$ <PYTHON-3.11.15> -m venv <RELEASE>\install
+
+[exit code 0]
+
+===== install the wheel =====
+$ <RELEASE>\install\Scripts\python.exe -m pip install --quiet <RELEASE>\src\dist\file_integrity_monitor-1.0.0-py3-none-any.whl
+
+[notice] A new release of pip is available: 24.0 -> 26.2.1
+[notice] To update, run: <RELEASE>\install\Scripts\python.exe -m pip install --upgrade pip
+[exit code 0]
+
+===== pip list in the install venv =====
+$ <RELEASE>\install\Scripts\python.exe -m pip list --disable-pip-version-check
+Package                Version
+---------------------- -------
+file-integrity-monitor 1.0.0
+pip                    24.0
+PyYAML                 6.0.3
+setuptools             79.0.1
+[exit code 0]
+
+===== fim --version =====
+$ <RELEASE>\install\Scripts\fim.exe --version
+fim 1.0.0
+[exit code 0]
+
+===== fim demo =====
+$ <RELEASE>\install\Scripts\fim.exe demo
+fim demo: a throw-away copy of the whole workflow on files made for it.
+workspace: <TMP>\fim-demo-8kkfkm0n (removed when the demo ends)
+
+step 1: create a key and record a signed baseline
+  fim init-key   -> key id b905de6f630a76de
+  fim baseline   -> 10 entries, sequence 1, signed
+
+[... middle of the transcript omitted: it is the one in the README ...]
+
+the temporary directory was removed
+[exit code 0]
+
+===== init-key =====
+$ <RELEASE>\install\Scripts\fim.exe init-key --key-file <RELEASE>\play\keys\fim.key --config <RELEASE>\play\state\fim.yaml
+key file written: <RELEASE>\play\keys\fim.key
+key id: 267a93825f4f560d
+Keep the key outside every monitored path, make a backup, and do not share it. Anyone who can read it can forge a baseline.
+[exit code 0]
+
+===== baseline =====
+$ <RELEASE>\install\Scripts\fim.exe baseline --config <RELEASE>\play\state\fim.yaml --baseline <RELEASE>\play\state\lab.baseline
+baseline written: <RELEASE>\play\state\lab.baseline
+  records: 3
+  sequence: 1
+  key id: 267a93825f4f560d
+  complete: yes
+  rollback anchor created: <RELEASE>\play\keys\fim.key.d6d4543e5207c98a.fim-anchor
+[exit code 0]
+
+===== check, clean (expect 0) =====
+$ <RELEASE>\install\Scripts\fim.exe check --baseline <RELEASE>\play\state\lab.baseline --key-file <RELEASE>\play\keys\fim.key
+fim check: baseline sequence 1 made 2026-10-10T19:09:01Z (key id 267a93825f4f560d)
+checked 2026-10-10T19:09:01Z with fim 1.0.0
+
+no changes found
+
+0 findings
+complete: yes
+[exit code 0]
+
+===== check, after a change (expect 1) =====
+$ <RELEASE>\install\Scripts\fim.exe check --baseline <RELEASE>\play\state\lab.baseline --key-file <RELEASE>\play\keys\fim.key
+fim check: baseline sequence 1 made 2026-10-10T19:09:01Z (key id 267a93825f4f560d)
+checked 2026-10-10T19:09:02Z with fim 1.0.0
+
+SEVERITY  CONFIDENCE  KIND      PATH
+high      high        modified  <RELEASE>\play\lab\a.txt
+                                sha256 differs (4a31f8a329cdbbab... -> 28db9c894b4bee55...); size 7 -> 15
+high      high        created   <RELEASE>\play\lab\c.txt
+                                new file, 5 bytes, sha256 9f5d1ba48d2fd5c3...
+
+2 findings (high 2)
+by kind: created 1, modified 1
+complete: yes
+[exit code 1]
+
+===== check, tampered (expect 3) =====
+$ <RELEASE>\install\Scripts\fim.exe check --baseline <RELEASE>\play\state\lab.baseline --key-file <RELEASE>\play\keys\fim.key
+fim: error: the baseline is not trustworthy: the MAC does not verify: the file was changed or damaged after writing
+[exit code 3]
+
+===== python -m fim --version =====
+$ <RELEASE>\install\Scripts\python.exe -m fim --version
+fim 1.0.0
+[exit code 0]
+
+===== pip-audit on the installed environment, as the venv was made =====
+$ <RELEASE>\tools\Scripts\python.exe -m pip_audit --path <RELEASE>\install\Lib\site-packages --progress-spinner off
+Name       Version ID              Fix Versions
+---------- ------- --------------- ------------
+pip        24.0    PYSEC-2026-1795 25.3
+pip        24.0    PYSEC-2026-1796 26.0
+pip        24.0    PYSEC-2026-2875 26.1
+pip        24.0    PYSEC-2026-2876 26.1
+pip        24.0    PYSEC-2026-196  26.1.2
+pip        24.0    PYSEC-2026-1795 25.3
+pip        24.0    PYSEC-2026-1796 26.0
+pip        24.0    PYSEC-2026-196  26.1.2
+pip        24.0    PYSEC-2026-2875 26.1
+pip        24.0    PYSEC-2026-2876 26.1
+pip        24.0    PYSEC-2026-3721 26.2
+pip        24.0    PYSEC-2026-3721 26.2.0
+setuptools 79.0.1  PYSEC-2026-3447 83.0.0
+setuptools 79.0.1  PYSEC-2026-3447 83.0.0
+
+Name                   Skip Reason
+---------------------- -------------------------------------------------------------------------------------
+file-integrity-monitor Dependency not found on PyPI and could not be audited: file-integrity-monitor (1.0.0)
+Found 14 known vulnerabilities in 2 packages
+[exit code 1]
+
+===== upgrade the venv's own bootstrap packages (not fim's dependencies) =====
+$ <RELEASE>\install\Scripts\python.exe -m pip install --quiet --upgrade pip setuptools
+
+[exit code 0]
+
+===== pip list after the upgrade =====
+$ <RELEASE>\install\Scripts\python.exe -m pip list --disable-pip-version-check
+Package                Version
+---------------------- -------
+file-integrity-monitor 1.0.0
+pip                    26.2.1
+PyYAML                 6.0.3
+setuptools             84.0.0
+[exit code 0]
+
+===== pip-audit on the installed environment, after the upgrade =====
+$ <RELEASE>\tools\Scripts\python.exe -m pip_audit --path <RELEASE>\install\Lib\site-packages --progress-spinner off
+Name                   Skip Reason
+---------------------- -------------------------------------------------------------------------------------
+file-integrity-monitor Dependency not found on PyPI and could not be audited: file-integrity-monitor (1.0.0)
+No known vulnerabilities found
+[exit code 0]
+
+===== bandit -r src =====
+$ <RELEASE>\tools\Scripts\python.exe -m bandit -r <RELEASE>\src\src
+Run started:2026-10-10 19:09:33.652328+00:00
+
+Test results:
+	No issues identified.
+
+Code scanned:
+	Total lines of code: 5789
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 0
+		Medium: 0
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 0
+		High: 0
+Files skipped (0):
+[main]	INFO	profile include tests: None
+[main]	INFO	profile exclude tests: None
+[main]	INFO	cli include tests: None
+[main]	INFO	cli exclude tests: None
+[main]	INFO	running on Python 3.11.15
+[exit code 0]
+
+===== nosec comments in src =====
+(none)
+
+===== wheel contents =====
+file_integrity_monitor-1.0.0-py3-none-any.whl: 44 files
+  [file list omitted: 38 modules under fim/, py.typed, and dist-info]
+
+sdist: file_integrity_monitor-1.0.0.tar.gz, 333475 bytes
+sdist members: 110
+key, log, baseline or anchor files in the sdist: none
+top-level entries in the sdist: ['.gitignore', 'CHANGELOG.md', 'CLAUDE.md', 'LICENSE', 'PKG-INFO', 'PLAN.md', 'README.md', 'SECURITY.md', 'docs', 'pyproject.toml', 'scripts', 'src', 'tests']
+
+FAILED STEPS: none
+
+removed fim-release-gatntfdy: exists=False
+```
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| Windows default, final tree | 2375 passed, 17 skipped, 70 deselected; 98.47% branch coverage; **41.2 s** total (pytest 40.17 s). Other runs this phase ranged from 38.9 s to 60.8 s (machine noise) |
+| Windows `--full`, commit `8e7975b` | 2444 passed, 18 skipped (`posix_only`); **100.00%** branch coverage; 317.1 s total |
+| Linux `--full` in WSL (Ubuntu, Python 3.14.4), commit `8e7975b` | 2430 passed, 17 skipped (16 `windows_only`, 1 junction test); **100.00%**; 11.4 s total |
+
+Repository hygiene, checked independently of the hygiene tests with a script over the 112 tracked
+and untracked-not-ignored files: no email-like string, no bidi, zero-width, control or C1
+character, no key, baseline or anchor file or header, no `*.key`, `*.pem`, `.env*` name; no commit
+message since Step 0 carries a trailer or an address; the sdist holds no key, log, baseline or
+anchor; no build output is tracked (`dist/` is ignored and was never made in the repository).
+
+### Process notes, plainly
+
+- The pre-tool hook blocked me five times for putting a pipe, `grep` or `tail` in the same
+  command as the gate; nothing ran.
+- My shell heredocs again collapsed a double backslash to a single one, several times. Each case
+  was caught before anything was committed: by a syntax error, by a failed assertion in my own
+  patch script, or (once, a real backspace character that a `\b` in a regular expression of a
+  test had become) by `cat -A`; the hygiene test would have caught that one too. After that I
+  used the editor tool for any text with backslashes.
+- To gate each commit on its own tree I moved `tests/test_docs.py` out while the earlier commits
+  were gated and put it back before its own.
+- The Phase 1 test that pinned the placeholder README ("work in progress", no measured numbers)
+  contradicted the phase's purpose; I replaced it with one that forbids absolute claims and
+  placeholders, and the new README tests cover the numbers. That is a deliberate test change, in
+  `8e7975b`.
+- The bench's first complete run is described above (40 minutes lost to my script printing at
+  the end).
+
+### Open questions for you
+
+1. `Development Status :: 5 - Production/Stable` in `pyproject.toml` for 1.0.0: say if you prefer
+   Beta.
+2. The 128 MiB baseline limit and the unchanged `MAX_FILES` ceiling (above).
+3. Whether to escape blank-looking letters (item 4 of the review) in a 1.0.x or 1.1.
+4. Whether to lower the peak memory of loading a baseline (the copies in `decode_baseline`).
+5. Linux was not benchmarked; if the numbers should cover it, `scripts/bench.py` runs there.
+
+```
+Built: scripts/bench.py and docs/performance.md (measured: machine, OS, Python, date and command per table); MAX_BASELINE_BYTES lowered 256 to 128 MiB on the D11 memory measurement; docs/threat-model.md; the real README (output pasted from runs, read/write section, 24-row claim table, Limitations); CHANGELOG and version 1.0.0; tests/test_docs.py; Step 0 (invariant 3, smoke tests, CI actions v5/v6); release checks pass (build, wheel install, demo and round trip, pip-audit, bandit)
+Tests added: 19 (2443 collected after Phase 5, 2462 now): 12 in test_docs.py (every named test exists, limits table, exit codes, every option and default, version, no local paths, README numbers in performance.md), 4 in test_bench.py (the script on a tiny tree, the synthetic tree checks clean, its file system view, the fresh-process workers), 2 smoke tests (watch, demo), 1 in test_baseline_codec.py (a baseline under a higher ceiling is refused); one Phase 1 README test replaced
+Real coverage: 100.00% branch coverage (3434 statements, 1000 branches, 0 missing) in the full gate on Windows (2444 passed, 18 skipped) and on Linux in WSL (2430 passed, 17 skipped); the default gate prints 98.47%
+Known gaps: Linux ran on Python 3.14.4 only (CI covers 3.11 to 3.13, not seen yet for these commits); measurements are from one Windows machine with real-time protection on, one run outlier unexplained, Linux not benchmarked; the mini-siem ingest was done once by hand with 0.1.0; blank-looking letters are not escaped; a hard crash can leave a .fim-*.tmp copy of a key; key_file in the configuration is trusted; the load path uses about six times the baseline's size and was not optimised; the CWE ids were not re-checked against the live list (PyPI-only network)
+Deviations from PLAN.md: (1) MAX_BASELINE_BYTES 256 MiB to 128 MiB, as D11 authorises, MAX_FILES ceiling left alone; (2) the golden payload, its file hash and the pinned policy digest regenerated for that change; (3) bench trees use the ceiling time budget, found necessary by a measurement; (4) Development Status Production/Stable and SECURITY.md "latest 1.x"; (5) the README test of Phase 1 replaced; (6) the review pass changed no code
 ```
