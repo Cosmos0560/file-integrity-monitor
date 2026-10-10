@@ -20,7 +20,7 @@ import yaml
 from conftest import REPO_ROOT
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-EXPECTED_ACTIONS = ["actions/checkout@v4", "actions/setup-python@v5"]
+EXPECTED_ACTIONS = ["actions/checkout@v5", "actions/setup-python@v6"]
 EXPECTED_COMMANDS = ['python -m pip install -e ".[dev]"', "python scripts/gate.py --full"]
 FORBIDDEN_TEXT = (
     "pull_request_target",
