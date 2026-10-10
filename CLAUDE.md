@@ -28,8 +28,12 @@ the quality bar is network-scanner v1.0.0 (gate, CI matrix, measured docs, claim
 How these apply here:
 - "PyPI" means pypi.org and files.pythonhosted.org. No GitHub, no web search, no other hosts.
   `pip-audit` uses its default `pypi` vulnerability service, not OSV.
-- The release check (section 10) uses a temporary venv outside the repo; that is the only second
-  venv allowed, and it is deleted afterwards.
+- The release check (section 10) uses a temporary venv outside the repo; it is deleted afterwards.
+  The only other second venv allowed is the Linux check venv inside WSL (section 3), at
+  `~/.venvs/fim-linux`, outside every repository and kept between runs. Its clone is
+  `~/fim-linux-check` in the WSL home, never under `/mnt/c`. WSL may reach PyPI only, like
+  everything else. Never touch the WSL distribution itself: no `wsl --unregister`, no `apt` or other
+  system package change without asking.
 - No email address anywhere: no `Co-Authored-By:` trailer (it contains an address), no email in
   `pyproject.toml` `authors`, LICENSE, SECURITY.md (use GitHub private vulnerability reporting),
   fixtures or test data. Test data that needs an address-like string builds it at runtime.
@@ -78,6 +82,22 @@ python scripts/gate.py && git commit -m "<message>"
 ```
 In Windows PowerShell 5.1 there is no `&&`; use:
 `python scripts/gate.py; if ($LASTEXITCODE -eq 0) { git commit -m "<message>" }`
+
+Linux check (WSL). Three CI runs in a row failed on Linux only, because the tests ran only on
+Windows. Before reporting a phase as done, run the full gate once on Linux via WSL as well as on
+Windows, on the committed code (the clone sees commits only, so commit first). Refresh and run, from
+PowerShell, with no pipe or redirect on the gate:
+```
+wsl -d Ubuntu -e sh -c "cd ~/fim-linux-check && git fetch -q /mnt/c/Studies/Projects/file-integrity-monitor main && git reset -q --hard FETCH_HEAD && ~/.venvs/fim-linux/bin/python scripts/gate.py --full"
+```
+If `~/fim-linux-check` or `~/.venvs/fim-linux` is missing, rebuild them inside WSL: `git clone` the
+repository from `/mnt/c/...` into `~/fim-linux-check`; `python3 -m venv --without-pip
+~/.venvs/fim-linux` (Ubuntu's python3 has no `ensurepip`); fetch the `pip` wheel from PyPI, check its
+sha256 against the PyPI JSON, run `<venv>/bin/python <wheel>/pip install pip`; then
+`~/.venvs/fim-linux/bin/python -m pip install -e ".[dev]"` in the clone. The interpreter there is the
+distribution's `python3` (3.14.4 on 2026-10-10), which is outside the CI matrix 3.11 to 3.13: the
+run finds operating-system differences, not Python-version ones. If WSL cannot start or cannot reach
+PyPI, say so in the report; do not install anything system-wide.
 
 Gate rules:
 - Never pipe, filter or redirect the gate output (no `| tail`, `| Select-String`, `| tee`,
