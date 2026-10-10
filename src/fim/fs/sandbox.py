@@ -5,7 +5,8 @@ It may be imported by ``app/demo.py`` only (the architecture check enforces it).
 does is confined to one directory that ``Sandbox.create`` makes with ``tempfile.mkdtemp`` (a new,
 uniquely named directory, mode 0700 on POSIX): every relative path is checked to be a plain
 descent below that root (no absolute path, no drive, no ``..``, no empty or dot component, no NUL,
-no separator inside a component), the directory itself is never a link, and ``destroy`` removes
+no separator or colon inside a component, on every OS alike), the directory itself is never a
+link, and ``destroy`` removes
 exactly that tree, never following a link out of it, clearing the read-only bit on Windows (and
 write protection on POSIX directories) first, and then checks that the directory is gone.
 """
@@ -35,12 +36,16 @@ class SandboxError(FileAccessError):
 
 
 def _bad_component(component: str) -> bool:
+    # The rule is the same on every OS, so what the tests prove on one holds on the other: a
+    # colon is a drive letter or an alternate data stream on Windows, and the demo's paths are
+    # fixed strings that never need one. "\\" is a separator on Windows and a plain character
+    # on POSIX, so it is refused too.
     return (
         component in ("", ".", "..")
         or "\x00" in component
         or "/" in component
         or "\\" in component
-        or (os.sep != "/" and ":" in component)  # a drive letter or an alternate data stream
+        or ":" in component
     )
 
 
