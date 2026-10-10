@@ -27,6 +27,11 @@ from fim.core.limits import (
 from fim.core.models import Severity
 
 
+# Slow, by decision of the owner (PLAN.md changelog v0.3.8): every test marked slow in this file is
+# an end-to-end run. It writes a real tree, a key and a signed baseline, then runs the whole watch
+# loop (scan, diff, render, append log) on a fake clock, 0.1 to 0.2 s each on Windows, which was
+# about 4 s of the default gate. The default gate keeps the two tests that refuse an argument before
+# anything is read; --full and CI run all of them.
 @pytest.fixture
 def ws(tmp_path: Path) -> Workspace:
     return make_workspace(tmp_path)
@@ -120,6 +125,7 @@ def modify(ws: Workspace, name: str, content: bytes) -> Callable[[], object]:
 # ---- delta output --------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_clean_tree_emits_nothing_and_exits_0(ws: Workspace) -> None:
     make_baseline(ws)
     run = watch(ws, max_cycles=3)
@@ -129,6 +135,7 @@ def test_a_clean_tree_emits_nothing_and_exits_0(ws: Workspace) -> None:
     assert run.sleeper.sleeps == [30, 30]
 
 
+@pytest.mark.slow
 def test_the_first_cycle_reports_every_finding_and_later_cycles_only_new_ones(
     ws: Workspace,
 ) -> None:
@@ -144,6 +151,7 @@ def test_the_first_cycle_reports_every_finding_and_later_cycles_only_new_ones(
     assert run.outcome.exit_code is ExitCode.FINDINGS
 
 
+@pytest.mark.slow
 def test_a_finding_that_goes_away_is_reported_resolved_with_the_same_id(ws: Workspace) -> None:
     make_baseline(ws)
     original = (ws.watched / "file0.txt").read_bytes()
@@ -158,6 +166,7 @@ def test_a_finding_that_goes_away_is_reported_resolved_with_the_same_id(ws: Work
     assert "no longer reported: modified" in second["fim"]["evidence"]
 
 
+@pytest.mark.slow
 def test_a_file_changed_again_is_a_new_finding_and_the_old_one_resolves(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"first change\n")
@@ -168,6 +177,7 @@ def test_a_file_changed_again_is_a_new_finding_and_the_old_one_resolves(ws: Work
     assert ids[2] == ids[0]
 
 
+@pytest.mark.slow
 def test_repeat_reports_every_finding_in_every_cycle(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -176,6 +186,7 @@ def test_repeat_reports_every_finding_in_every_cycle(ws: Workspace) -> None:
     assert run.outcome.findings_reported == 3
 
 
+@pytest.mark.slow
 def test_min_severity_hides_lower_findings_in_every_cycle(ws: Workspace) -> None:
     make_baseline(ws)
     os.chmod(ws.watched / "file0.txt", stat.S_IREAD)
@@ -189,6 +200,7 @@ def test_min_severity_hides_lower_findings_in_every_cycle(ws: Workspace) -> None
 # ---- timing --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_cycles_are_one_interval_apart_and_never_overlap(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -202,6 +214,7 @@ def test_cycles_are_one_interval_apart_and_never_overlap(ws: Workspace) -> None:
     assert run.sleeper.sleeps == [45, 45, 45]  # no sleep after the last cycle
 
 
+@pytest.mark.slow
 def test_the_default_interval_is_the_documented_one(ws: Workspace) -> None:
     make_baseline(ws)
     sleeper_run = watch(ws, interval_seconds=WATCH_INTERVAL_DEFAULT_SECONDS)
@@ -220,6 +233,7 @@ def test_an_interval_outside_the_limits_is_a_usage_error_before_anything_is_read
         watch(ws, interval_seconds=interval)
 
 
+@pytest.mark.slow
 def test_the_limits_themselves_are_accepted(ws: Workspace) -> None:
     make_baseline(ws)
     for interval in (WATCH_INTERVAL_MIN_SECONDS, WATCH_INTERVAL_MAX_SECONDS):
@@ -237,6 +251,7 @@ def test_max_cycles_must_be_positive_and_the_format_known(ws: Workspace) -> None
 # ---- the baseline is verified every cycle --------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_tampered_baseline_mid_watch_is_one_critical_event_and_exit_3(ws: Workspace) -> None:
     make_baseline(ws)
     good = ws.baseline.read_bytes()
@@ -262,6 +277,7 @@ def test_a_tampered_baseline_mid_watch_is_one_critical_event_and_exit_3(ws: Work
     assert any("no longer verifies" in note for note in run.notes)
 
 
+@pytest.mark.slow
 def test_a_deleted_baseline_mid_watch_is_the_same_event_and_exit_3(ws: Workspace) -> None:
     make_baseline(ws)
     run = watch(ws, max_cycles=3, actions=[lambda: ws.baseline.unlink()])
@@ -269,6 +285,7 @@ def test_a_deleted_baseline_mid_watch_is_the_same_event_and_exit_3(ws: Workspace
     assert run.outcome.exit_code is ExitCode.INTEGRITY
 
 
+@pytest.mark.slow
 def test_a_baseline_that_verifies_again_resolves_the_event_but_the_exit_stays_3(
     ws: Workspace,
 ) -> None:
@@ -284,6 +301,7 @@ def test_a_baseline_that_verifies_again_resolves_the_event_but_the_exit_stays_3(
     assert run.outcome.exit_code is ExitCode.INTEGRITY
 
 
+@pytest.mark.slow
 def test_an_older_signed_baseline_put_back_mid_watch_is_a_rollback_event(ws: Workspace) -> None:
     make_baseline(ws)
     old = ws.baseline.read_bytes()
@@ -294,6 +312,7 @@ def test_an_older_signed_baseline_put_back_mid_watch_is_a_rollback_event(ws: Wor
     assert run.outcome.exit_code is ExitCode.INTEGRITY
 
 
+@pytest.mark.slow
 def test_a_new_valid_baseline_mid_watch_is_adopted(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"a change the owner accepts\n")
@@ -308,6 +327,7 @@ def test_a_new_valid_baseline_mid_watch_is_adopted(ws: Workspace) -> None:
     assert run.outcome.exit_code is ExitCode.FINDINGS  # the first cycle did report something
 
 
+@pytest.mark.slow
 def test_a_baseline_that_never_verified_is_exit_3_before_any_cycle_or_output(
     ws: Workspace,
 ) -> None:
@@ -321,6 +341,7 @@ def test_a_baseline_that_never_verified_is_exit_3_before_any_cycle_or_output(
     assert not log.exists()
 
 
+@pytest.mark.slow
 def test_a_missing_anchor_is_one_warning_not_one_per_cycle(ws: Workspace) -> None:
     make_baseline(ws)
     anchor_file(ws).unlink()
@@ -331,6 +352,7 @@ def test_a_missing_anchor_is_one_warning_not_one_per_cycle(ws: Workspace) -> Non
 # ---- incomplete scans ----------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_an_incomplete_scan_reports_no_resolved_events_and_exits_4(
     ws: Workspace, tmp_path: Path
 ) -> None:
@@ -347,6 +369,7 @@ def test_an_incomplete_scan_reports_no_resolved_events_and_exits_4(
 # ---- stopping ------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_ctrl_c_during_the_pause_stops_cleanly_with_the_state_so_far(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -361,6 +384,7 @@ def test_ctrl_c_during_the_pause_stops_cleanly_with_the_state_so_far(ws: Workspa
     assert run.kinds() == ["modified"]
 
 
+@pytest.mark.slow
 def test_ctrl_c_in_the_middle_of_a_scan_stops_cleanly_and_closes_the_log(
     ws: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -386,6 +410,7 @@ def test_ctrl_c_in_the_middle_of_a_scan_stops_cleanly_and_closes_the_log(
 # ---- output --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_events_go_to_an_append_log_not_to_stdout(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -399,6 +424,7 @@ def test_events_go_to_an_append_log_not_to_stdout(ws: Workspace) -> None:
     assert run.outcome.events == 2
 
 
+@pytest.mark.slow
 def test_an_existing_log_is_not_replaced_without_force(ws: Workspace) -> None:
     make_baseline(ws)
     log = ws.base / "events.jsonl"
@@ -412,6 +438,7 @@ def test_an_existing_log_is_not_replaced_without_force(ws: Workspace) -> None:
     assert b'"kind":"modified"' in log.read_bytes()
 
 
+@pytest.mark.slow
 def test_a_log_inside_a_monitored_path_is_refused(ws: Workspace) -> None:
     make_baseline(ws)
     with pytest.raises(Exception, match="must not be inside a monitored path"):
@@ -419,6 +446,7 @@ def test_a_log_inside_a_monitored_path_is_refused(ws: Workspace) -> None:
     assert not (ws.watched / "events.jsonl").exists()
 
 
+@pytest.mark.slow
 def test_csv_has_one_header_and_rows_for_the_events(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -436,6 +464,7 @@ def test_csv_has_one_header_and_rows_for_the_events(ws: Workspace) -> None:
     assert '"created"' in rows[2]
 
 
+@pytest.mark.slow
 def test_a_hostile_file_name_is_one_escaped_line_per_event(ws: Workspace) -> None:
     make_baseline(ws)
     name = "evil\u202e\u200bname.txt" if os.name == "nt" else "evil\n\x1b[2Jname\u202e.txt"
@@ -448,6 +477,7 @@ def test_a_hostile_file_name_is_one_escaped_line_per_event(ws: Workspace) -> Non
     assert json.loads(run.lines[0])["fim"]["kind"] == "created"
 
 
+@pytest.mark.slow
 def test_the_host_and_baseline_sequence_come_from_the_baseline(ws: Workspace) -> None:
     make_baseline(ws)
     (ws.watched / "file0.txt").write_bytes(b"changed\n")
@@ -457,6 +487,7 @@ def test_the_host_and_baseline_sequence_come_from_the_baseline(ws: Workspace) ->
     assert event["fim"]["schema"] == "fim-event/1"
 
 
+@pytest.mark.slow
 def test_the_watch_never_changes_a_monitored_file(ws: Workspace) -> None:
     from app_helpers import tree_state
 
@@ -467,6 +498,7 @@ def test_the_watch_never_changes_a_monitored_file(ws: Workspace) -> None:
     assert tree_state(ws.watched) == before
 
 
+@pytest.mark.slow
 def test_a_second_independent_copy_of_the_tree_gives_the_same_events(
     ws: Workspace, tmp_path: Path
 ) -> None:
@@ -481,6 +513,7 @@ def test_a_second_independent_copy_of_the_tree_gives_the_same_events(
 # ---- the less common branches --------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_complete_baseline_and_a_scan_that_hits_a_limit_is_exit_4_with_a_note(
     ws: Workspace,
 ) -> None:
@@ -495,6 +528,7 @@ def test_a_complete_baseline_and_a_scan_that_hits_a_limit_is_exit_4_with_a_note(
     assert not any("made from an incomplete scan" in note for note in run.notes)
 
 
+@pytest.mark.slow
 def test_a_valid_older_baseline_without_an_anchor_is_still_a_rollback(ws: Workspace) -> None:
     make_baseline(ws)
     old = ws.baseline.read_bytes()
@@ -510,6 +544,7 @@ def test_a_valid_older_baseline_without_an_anchor_is_still_a_rollback(ws: Worksp
     assert run.outcome.exit_code is ExitCode.INTEGRITY
 
 
+@pytest.mark.slow
 def test_more_findings_than_the_report_limit_is_said_once(ws: Workspace) -> None:
     write_config(ws.config, [ws.watched], limits={"max_findings_reported": 1})
     make_baseline(ws)
@@ -520,6 +555,7 @@ def test_more_findings_than_the_report_limit_is_said_once(ws: Workspace) -> None
     assert run.outcome.findings_reported == 3  # one per cycle: the list is cut at the limit
 
 
+@pytest.mark.slow
 def test_a_configuration_that_differs_from_the_baseline_is_a_policy_drift_event(
     ws: Workspace,
 ) -> None:

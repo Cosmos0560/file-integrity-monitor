@@ -111,6 +111,10 @@ def bystander(tmp_path: Path) -> Path:
 # ---- the demo ------------------------------------------------------------------------------------
 
 
+# Slow, by decision of the owner (PLAN.md changelog v0.3.8): every test of this section that is
+# marked slow runs the whole demo (a real temporary tree, key, baseline, six steps and the
+# removal), 0.1 to 0.35 s each on Windows. The sandbox tests below, the staging failure and the
+# hostile-name count stay in the default gate; --full and CI run all of them.
 @pytest.fixture(scope="module")
 def transcript(tmp_path_factory: pytest.TempPathFactory) -> str:
     """One real run, shared by the tests that only read what the demo printed."""
@@ -121,6 +125,7 @@ def transcript(tmp_path_factory: pytest.TempPathFactory) -> str:
     return outcome.text
 
 
+@pytest.mark.slow
 def test_the_demo_shows_every_expected_finding_kind_and_the_refusal(transcript: str) -> None:
     for kind in EXPECTED_KINDS:
         assert kind.value in transcript
@@ -131,6 +136,7 @@ def test_the_demo_shows_every_expected_finding_kind_and_the_refusal(transcript: 
     assert "the temporary directory was removed" in transcript
 
 
+@pytest.mark.slow
 def test_the_hostile_name_is_shown_escaped_and_never_raw(transcript: str) -> None:
     assert "payroll\\u202e\\u200btxt.bak" in transcript
     assert transcript.isascii()
@@ -141,12 +147,14 @@ def test_the_hostile_name_is_shown_escaped_and_never_raw(transcript: str) -> Non
 
 
 @pytest.mark.posix_only
+@pytest.mark.slow
 def test_on_posix_a_name_with_an_escape_sequence_and_a_newline_is_also_shown_escaped(
     transcript: str,
 ) -> None:
     assert "\\x1b[2Jcleared\\x0asecond-line.txt" in transcript
 
 
+@pytest.mark.slow
 def test_the_demo_touches_only_its_own_directory_and_leaves_the_base_as_it_found_it(
     tmp_path: Path, bystander: Path, audit: Audit
 ) -> None:
@@ -158,6 +166,7 @@ def test_the_demo_touches_only_its_own_directory_and_leaves_the_base_as_it_found
     assert audit.touched  # the guard really was in the way of every mutation
 
 
+@pytest.mark.slow
 def test_the_workspace_exists_while_the_demo_runs_and_each_run_has_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,6 +196,7 @@ def test_the_workspace_exists_while_the_demo_runs_and_each_run_has_its_own(
 
 
 @pytest.mark.parametrize("failing_call", [1, 2, 3])
+@pytest.mark.slow
 def test_a_step_that_raises_still_removes_the_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bystander: Path, failing_call: int
 ) -> None:
@@ -218,6 +228,7 @@ def test_a_failure_while_staging_the_files_still_removes_the_directory(
     assert listing(tmp_path) == []
 
 
+@pytest.mark.slow
 def test_a_demo_that_finds_nothing_is_a_failed_demo_not_a_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -229,6 +240,7 @@ def test_a_demo_that_finds_nothing_is_a_failed_demo_not_a_pass(
     assert DemoError.exit_code is ExitCode.ERROR
 
 
+@pytest.mark.slow
 def test_a_baseline_that_is_accepted_after_tampering_is_a_failed_demo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -238,6 +250,7 @@ def test_a_baseline_that_is_accepted_after_tampering_is_a_failed_demo(
     assert listing(tmp_path) == []
 
 
+@pytest.mark.slow
 def test_a_clean_check_that_reports_findings_is_a_failed_demo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -268,6 +281,7 @@ def test_windows_gets_one_hostile_name_and_posix_two(monkeypatch: pytest.MonkeyP
     assert not any(ord(char) < 0x20 for char in windows[0])  # a legal Windows file name
 
 
+@pytest.mark.slow
 def test_the_cli_demo_prints_the_transcript_and_exits_0(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
