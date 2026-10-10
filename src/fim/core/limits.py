@@ -31,8 +31,11 @@ MAX_HASH_FILE_BYTES = 256 * MIB
 MAX_HASH_FILE_BYTES_CEILING = 4 * GIB
 MAX_RUN_SECONDS = 900
 MAX_RUN_SECONDS_CEILING = 3600
-MAX_BASELINE_BYTES = 256 * MIB
-MAX_BASELINE_BYTES_CEILING = 256 * MIB
+# Planned as 256 MiB and lowered after Phase 6 measured it (docs/performance.md, PLAN.md D11):
+# reading and parsing a baseline peaked at about 6.1 times its size in memory, so 256 MiB would
+# have needed about 1.5 GiB. 128 MiB keeps the peak under 1 GiB.
+MAX_BASELINE_BYTES = 128 * MIB
+MAX_BASELINE_BYTES_CEILING = 128 * MIB
 MAX_CONFIG_BYTES = 256 * KIB
 MAX_CONFIG_BYTES_CEILING = 256 * KIB
 MAX_PATTERNS = 256

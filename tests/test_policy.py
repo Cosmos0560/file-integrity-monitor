@@ -78,7 +78,7 @@ def test_the_digest_is_pinned_so_a_change_of_the_canonical_form_is_noticed() -> 
     digest = compute_digest(
         [posix_root("/etc", severity=Severity.HIGH)], ["*.tmp"], SymlinkPolicy.NEVER, DEFAULT_LIMITS
     )
-    assert digest == "f28b4f18598827dac7c22684c9ad49ae3e3550c62498b730f4fa212f6c0dc666"
+    assert digest == "484d74a4e7a4ef9e2d4083e287f7bad02324b9d70417ca9f4b735d9544fb405d"
 
 
 def test_a_built_policy_carries_a_valid_digest() -> None:

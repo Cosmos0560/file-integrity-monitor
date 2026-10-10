@@ -7,7 +7,7 @@ that it creates and removes, and it runs the real use cases (``run_baseline``, `
 
     python scripts/bench.py throughput  [--files 1000,10000,100000] [--large-mib 16,64,256]
     python scripts/bench.py memory      [--files 1000,10000,100000]
-    python scripts/bench.py baseline-load [--records 50000,200000,500000,800000]
+    python scripts/bench.py baseline-load [--records 50000,200000,400000]
     python scripts/bench.py all
 
 ``throughput`` measures wall time with no tracing (tracing would slow everything down),
@@ -604,10 +604,11 @@ def bench_baseline_load(base: Path, record_counts: Sequence[int]) -> None:
     print("## Loading a baseline and running a whole check, at scale (fresh process each)\n")
     print(
         "The trees are synthetic: the real scanner, encoder, MAC check and comparison run on a "
-        "file system that\nexists only as arithmetic, so that sizes up to the 256 MiB limit can be "
-        "made without a million real files.\n`load` is read, verify the MAC and parse; `check` is "
-        "the whole command against an identical tree (no findings).\nPeak working set is what the "
-        "operating system reports for the process; tracemalloc is Python's own count.\n"
+        "file system that\nexists only as arithmetic, so that sizes up to the baseline size limit "
+        "can be made without a million real files.\n`load` is read, verify the MAC and parse; "
+        "`check` is the whole command against an identical tree (no findings).\n"
+        "Peak working set is what the operating system reports for the process; "
+        "tracemalloc is Python's own count.\n"
     )
     rows: list[list[str]] = []
     for count in record_counts:
@@ -659,7 +660,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sub = commands.add_parser(name)
         sub.add_argument("--files", default="1000,10000,100000", type=parse_numbers)
         sub.add_argument("--large-mib", default="16,64,256", type=parse_numbers)
-        sub.add_argument("--records", default="50000,200000,500000,800000", type=parse_numbers)
+        sub.add_argument("--records", default="50000,200000,400000", type=parse_numbers)
         sub.add_argument("--repeats", default=3, type=int)
         sub.add_argument("--workdir", default=None, help="parent directory for the trees")
     worker = commands.add_parser("_worker")

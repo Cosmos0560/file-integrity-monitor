@@ -121,7 +121,7 @@ def test_a_different_sequence_changes_the_mac_and_the_digest() -> None:
 
 # ---- the golden file -----------------------------------------------------------------------------
 
-GOLDEN_FULL_FILE_SHA256 = "c362130787c5d610cffba54efa2d6eb49e38bdf008353cec84d7fd5f62ac1907"
+GOLDEN_FULL_FILE_SHA256 = "7434241f83d81c7341d8b8a474e0f3f95c87e003724d5431d06620d9baf27c68"
 GOLDEN_KEY_ID = "a2698a054f3aac06"
 
 
@@ -389,6 +389,13 @@ def test_a_signed_payload_with_a_tampered_policy_digest_is_refused() -> None:
     document = good_document()
     document["header"]["policy"]["digest"] = "0" * 64
     assert "digest" in refused(signed(document)).message
+
+
+def test_a_baseline_written_under_a_higher_ceiling_is_refused_not_trusted() -> None:
+    """Lowering a ceiling (PLAN.md D11, Phase 6) must not let an older baseline through."""
+    document = good_document()
+    document["header"]["limits"]["max_baseline_bytes"] = 2 * MAX_BASELINE_BYTES
+    assert "hard ceiling" in refused(signed(document)).message
 
 
 def test_a_signed_payload_with_a_changed_policy_but_old_digest_is_refused() -> None:

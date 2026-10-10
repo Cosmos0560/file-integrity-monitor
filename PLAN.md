@@ -248,7 +248,7 @@ D14: not for storage).
 | `MAX_HASH_FILE_BYTES` | 256 MiB | 4 GiB |
 | `HASH_CHUNK_BYTES` | 1 MiB | - |
 | `MAX_RUN_SECONDS` | 900 | 3 600 |
-| `MAX_BASELINE_BYTES` | 256 MiB | 256 MiB |
+| `MAX_BASELINE_BYTES` | 128 MiB | 128 MiB |
 | `MAX_CONFIG_BYTES` | 256 KiB | 256 KiB |
 | `MAX_PATTERNS` / `MAX_PATTERN_CHARS` | 256 / 512 | same |
 | `MAX_FINDINGS_REPORTED` | 10 000 | 10 000 |
@@ -263,6 +263,15 @@ README and docs in sync with this file.
 - **D11 amendment:** Phase 6 measures peak memory when loading a baseline near
   `MAX_BASELINE_BYTES`; if it is unreasonable for a laptop, the ceiling is lowered with the
   measured reason.
+- **D11 result (Phase 6, v0.4):** measured with `scripts/bench.py baseline-load`: the peak
+  working set of loading a baseline, and of a whole `check`, was 6.1 times the file's size
+  (1 454 MiB for a 238 MiB baseline of 800 817 records; 919 MiB for 149 MiB; 389 MiB for 60 MiB).
+  At 256 MiB that is about 1.5 GiB, too much for a monitor that `watch` re-reads every cycle on
+  an 8 GiB laptop. `MAX_BASELINE_BYTES` (default and ceiling) is therefore **128 MiB**, about
+  0.8 GiB at the peak. Full figures and the commands are in `docs/performance.md`. The
+  `MAX_FILES` ceiling is unchanged: at about 300 bytes a record, 128 MiB holds roughly 430 000
+  entries, so a configuration that raises `max_files` towards its ceiling can reach the byte
+  limit first; `baseline` then refuses with a message and writes nothing.
 
 ### D12 - mini-siem JSONL mapping
 Based on mini-siem's actual `parsers/jsonlog.py` and `core/events.py` (read for this plan):
