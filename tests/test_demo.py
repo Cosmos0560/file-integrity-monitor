@@ -111,21 +111,43 @@ def bystander(tmp_path: Path) -> Path:
 # ---- the demo ------------------------------------------------------------------------------------
 
 
-def test_the_demo_shows_every_expected_finding_kind_and_the_refusal(
-    tmp_path: Path, audit: Audit
-) -> None:
-    outcome = run_demo(FakeClock(), base_directory=str(tmp_path))
+@pytest.fixture(scope="module")
+def transcript(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """One real run, shared by the tests that only read what the demo printed."""
+    base = tmp_path_factory.mktemp("demo-once")
+    outcome = run_demo(FakeClock(), base_directory=str(base))
     assert outcome.exit_code is ExitCode.OK
+    assert outcome.workspace_removed
+    return outcome.text
+
+
+def test_the_demo_shows_every_expected_finding_kind_and_the_refusal(transcript: str) -> None:
     for kind in EXPECTED_KINDS:
-        assert kind.value in outcome.text
-    assert "exit code 0" in outcome.text  # the clean check before the changes
-    assert "exit code 1" in outcome.text  # the check that finds them
-    assert "refused, exit code 3" in outcome.text  # the tampered baseline
-    assert "MAC does not verify" in outcome.text
-    assert audit.touched  # the guard really was in the way of every mutation
+        assert kind.value in transcript
+    assert "exit code 0" in transcript  # the clean check before the changes
+    assert "exit code 1" in transcript  # the check that finds them
+    assert "refused, exit code 3" in transcript  # the tampered baseline
+    assert "MAC does not verify" in transcript
+    assert "the temporary directory was removed" in transcript
 
 
-def test_the_demo_removes_its_directory_and_leaves_the_base_untouched(
+def test_the_hostile_name_is_shown_escaped_and_never_raw(transcript: str) -> None:
+    assert "payroll\\u202e\\u200btxt.bak" in transcript
+    assert transcript.isascii()
+    assert "\x1b" not in transcript
+    assert "\u202e" not in transcript
+    assert "\u200b" not in transcript
+    assert transcript.count("\n\n\n") == 0
+
+
+@pytest.mark.posix_only
+def test_on_posix_a_name_with_an_escape_sequence_and_a_newline_is_also_shown_escaped(
+    transcript: str,
+) -> None:
+    assert "\\x1b[2Jcleared\\x0asecond-line.txt" in transcript
+
+
+def test_the_demo_touches_only_its_own_directory_and_leaves_the_base_as_it_found_it(
     tmp_path: Path, bystander: Path, audit: Audit
 ) -> None:
     before = digest_tree(tmp_path)
@@ -133,23 +155,34 @@ def test_the_demo_removes_its_directory_and_leaves_the_base_untouched(
     assert outcome.workspace_removed
     assert digest_tree(tmp_path) == before
     assert listing(tmp_path) == ["bystander"]
-    assert "the temporary directory was removed" in outcome.text
+    assert audit.touched  # the guard really was in the way of every mutation
 
 
-def test_the_workspace_exists_while_the_demo_runs_and_is_gone_after(
+def test_the_workspace_exists_while_the_demo_runs_and_each_run_has_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Also the default: with no base directory the demo uses the system temp directory."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     seen: list[list[str]] = []
-    real_check = run_check
+    made: list[str] = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def recording(*args: Any, **kwargs: Any) -> str:
+        made.append(real_mkdtemp(*args, **kwargs))
+        return made[-1]
 
     def spying_check(*args: Any, **kwargs: Any) -> Any:
         seen.append(listing(tmp_path))
-        return real_check(*args, **kwargs)
+        return run_check(*args, **kwargs)
 
+    monkeypatch.setattr("fim.fs.sandbox.tempfile.mkdtemp", recording)
     monkeypatch.setattr("fim.app.demo.run_check", spying_check)
-    run_demo(FakeClock(), base_directory=str(tmp_path))
+    run_demo(FakeClock())
+    run_demo(FakeClock())
     assert seen
     assert all(len(names) == 1 and names[0].startswith("fim-demo-") for names in seen)
+    assert len(made) == 2
+    assert made[0] != made[1]
     assert listing(tmp_path) == []
 
 
@@ -205,49 +238,34 @@ def test_a_baseline_that_is_accepted_after_tampering_is_a_failed_demo(
     assert listing(tmp_path) == []
 
 
-def test_the_hostile_name_is_shown_escaped_and_never_raw(tmp_path: Path) -> None:
-    text = run_demo(FakeClock(), base_directory=str(tmp_path)).text
-    assert "payroll\\u202e\\u200btxt.bak" in text
-    assert text.isascii()
-    assert "\x1b" not in text
-    assert "\u202e" not in text
-    assert "\u200b" not in text
-    assert text.count("\n\n\n") == 0
-
-
-@pytest.mark.posix_only
-def test_on_posix_a_name_with_an_escape_sequence_and_a_newline_is_also_shown_escaped(
-    tmp_path: Path,
-) -> None:
-    text = run_demo(FakeClock(), base_directory=str(tmp_path)).text
-    assert "\\x1b[2Jcleared\\x0asecond-line.txt" in text
-    assert "created" in text
-
-
-def test_the_demo_uses_the_system_temp_directory_when_no_base_is_given(
+def test_a_clean_check_that_reports_findings_is_a_failed_demo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    outcome = run_demo(FakeClock())
-    assert outcome.workspace_removed
+    real_check = run_check
+    state = {"calls": 0}
+
+    def meddling(request: Any, clock: Any) -> Any:
+        state["calls"] += 1
+        if state["calls"] == 1:  # before the first check, change a watched file behind its back
+            watched = Path(request.config_path).parent.parent / "watched"
+            (watched / "notes.txt").write_bytes(b"changed behind the demo's back")
+        return real_check(request, clock)
+
+    monkeypatch.setattr("fim.app.demo.run_check", meddling)
+    with pytest.raises(DemoError, match="reported as changed before any change"):
+        run_demo(FakeClock(), base_directory=str(tmp_path))
     assert listing(tmp_path) == []
 
 
-def test_two_demos_do_not_share_a_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    made: list[str] = []
-    real = tempfile.mkdtemp
-
-    def recording(*args: Any, **kwargs: Any) -> str:
-        made.append(real(*args, **kwargs))
-        return made[-1]
-
-    monkeypatch.setattr("fim.fs.sandbox.tempfile.mkdtemp", recording)
-    run_demo(FakeClock(), base_directory=str(tmp_path))
-    run_demo(FakeClock(), base_directory=str(tmp_path))
-    assert len(made) == 2
-    assert made[0] != made[1]
+def test_windows_gets_one_hostile_name_and_posix_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fim.app.demo.sys.platform", "win32")
+    windows = hostile_names()
+    monkeypatch.setattr("fim.app.demo.sys.platform", "linux")
+    posix = hostile_names()
+    assert len(windows) == 1
+    assert posix[0] == windows[0]
+    assert len(posix) == 2
+    assert not any(ord(char) < 0x20 for char in windows[0])  # a legal Windows file name
 
 
 def test_the_cli_demo_prints_the_transcript_and_exits_0(
@@ -394,36 +412,6 @@ def test_the_module_exports_and_is_importable_only_by_the_demo() -> None:
 
     checker = (REPO_ROOT / "scripts" / "check_architecture.py").read_text(encoding="utf-8")
     assert '"fim.fs.sandbox": frozenset({"fim.app.demo"})' in checker
-
-
-def test_a_clean_check_that_reports_findings_is_a_failed_demo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    real_check = run_check
-    state = {"calls": 0}
-
-    def meddling(request: Any, clock: Any) -> Any:
-        state["calls"] += 1
-        if state["calls"] == 1:  # before the first check, change a watched file behind its back
-            watched = Path(request.config_path).parent.parent / "watched"
-            (watched / "notes.txt").write_bytes(b"changed behind the demo's back")
-        return real_check(request, clock)
-
-    monkeypatch.setattr("fim.app.demo.run_check", meddling)
-    with pytest.raises(DemoError, match="reported as changed before any change"):
-        run_demo(FakeClock(), base_directory=str(tmp_path))
-    assert listing(tmp_path) == []
-
-
-def test_windows_gets_one_hostile_name_and_posix_two(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fim.app.demo.sys.platform", "win32")
-    windows = hostile_names()
-    monkeypatch.setattr("fim.app.demo.sys.platform", "linux")
-    posix = hostile_names()
-    assert len(windows) == 1
-    assert posix[0] == windows[0]
-    assert len(posix) == 2
-    assert not any(ord(char) < 0x20 for char in windows[0])  # a legal Windows file name
 
 
 def test_a_directory_that_cannot_be_made_or_written_is_a_sandbox_error(box: Sandbox) -> None:

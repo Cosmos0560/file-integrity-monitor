@@ -39,16 +39,22 @@ def fake_home_directories(tmp_path_factory: pytest.TempPathFactory) -> dict[str,
     return directories
 
 
-@pytest.fixture(autouse=True)
-def isolated_environment(
-    fake_home_directories: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> Iterator[Path]:
-    """Point every home and config variable at an empty temporary directory.
+@pytest.fixture(scope="session", autouse=True)
+def session_environment(fake_home_directories: dict[str, Path]) -> Iterator[None]:
+    """Point every home and config variable at an empty temporary directory, once per run.
 
-    A test that writes into one of them fails here, so the shared directories stay empty.
+    Setting and restoring five variables around each of 2400 tests was measurable; a test that
+    changes one of them uses its own ``monkeypatch``, which restores the value set here.
     """
-    for name, directory in fake_home_directories.items():
-        monkeypatch.setenv(name, str(directory))
+    with pytest.MonkeyPatch.context() as patch:
+        for name, directory in fake_home_directories.items():
+            patch.setenv(name, str(directory))
+        yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(fake_home_directories: dict[str, Path]) -> Iterator[Path]:
+    """Fail any test that wrote into one of the shared fake home directories."""
     yield next(iter(fake_home_directories.values())).parent
     for directory in fake_home_directories.values():
         leftovers = os.listdir(directory)
@@ -56,14 +62,15 @@ def isolated_environment(
             raise AssertionError(f"a test wrote into the fake home {directory}: {leftovers}")
 
 
-@pytest.fixture(autouse=True)
-def fs_path_guard(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Make fs/observe.py and fs/safe_files.py refuse paths outside the pytest temp base."""
+@pytest.fixture(scope="session", autouse=True)
+def fs_path_guard(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Make fs/observe.py, fs/safe_files.py and fs/sandbox.py refuse paths outside the pytest
+    temp base. The base never changes during a run, so the guard is installed once."""
     base = tmp_path_factory.getbasetemp()
-    for module in path_guard.load_guarded_modules():
-        path_guard.install_guard(monkeypatch, module, base)
+    with pytest.MonkeyPatch.context() as patch:
+        for module in path_guard.load_guarded_modules():
+            path_guard.install_guard(patch, module, base)
+        yield
 
 
 @cache

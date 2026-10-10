@@ -153,10 +153,11 @@ def test_watch_repeat_reports_everything_every_cycle(
 
 @pytest.mark.parametrize("interval", ["9", "0", "86401", "-1"])
 def test_watch_refuses_an_interval_outside_the_limits_with_exit_2(
-    ws: Workspace, capsys: pytest.CaptureFixture[str], interval: str
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], interval: str
 ) -> None:
+    """The check comes before any file is read, so no workspace is needed."""
     code, out, err = run(
-        ["watch", "--baseline", str(ws.baseline), "--key-file", str(ws.key_file),
+        ["watch", "--baseline", str(tmp_path / "none"), "--key-file", str(tmp_path / "k"),
          "--interval", interval],
         capsys,
     )  # fmt: skip
