@@ -42,18 +42,25 @@ def is_inside(path: str, base: Path) -> bool:
     return candidate == root or candidate.startswith(root.rstrip(os.sep) + os.sep)
 
 
+@functools.cache
+def _signature(function: Callable[..., Any]) -> inspect.Signature:
+    """Read once per function: the guard is installed for every test, and ``inspect.signature``
+    was about 1.5 s of the default gate before this was cached (a function never changes)."""
+    return inspect.signature(function)
+
+
 def guarded_functions(module: ModuleType) -> list[str]:
     """Names of the public functions of ``module`` that take a ``path``."""
     names = []
     for name in getattr(module, "__all__", ()):
         function = getattr(module, name, None)
-        if inspect.isfunction(function) and "path" in inspect.signature(function).parameters:
+        if inspect.isfunction(function) and "path" in _signature(function).parameters:
             names.append(name)
     return names
 
 
 def _wrap(function: Callable[..., Any], name: str, base: Path) -> Callable[..., Any]:
-    signature = inspect.signature(function)
+    signature = _signature(function)
 
     @functools.wraps(function)
     def guarded(*args: Any, **kwargs: Any) -> Any:

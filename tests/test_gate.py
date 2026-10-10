@@ -82,6 +82,44 @@ def test_failing_step_does_not_stop_later_steps_and_fails_the_gate(tmp_path: Pat
     assert "RESULT: FAIL" in text
 
 
+def test_the_last_step_runs_while_the_others_do_and_the_output_keeps_the_order(
+    tmp_path: Path,
+) -> None:
+    """No wall-clock assertion: the first step can only succeed if the last one has started."""
+    marker = tmp_path / "last-started"
+    waits = (
+        "import os, time\n"
+        "for _ in range(600):\n"
+        f"    if os.path.exists({str(marker)!r}):\n"
+        "        print('saw the last step'); raise SystemExit(0)\n"
+        "    time.sleep(0.05)\n"
+        "raise SystemExit(9)\n"
+    )
+    steps = [
+        _step("waits for the last", waits),
+        _step("last", f"open({str(marker)!r}, 'w').close(); print('last output')"),
+    ]
+    log = tmp_path / "gate.log"
+    with log.open("w", encoding="utf-8") as handle:
+        status = gate.run_gate(steps, handle)
+    text = log.read_text(encoding="utf-8")
+    assert status == 0
+    assert text.index("=== waits for the last ===") < text.index("=== last ===")
+    assert text.index("saw the last step") < text.index("last output")
+    assert "PASS  waits for the last" in text
+    assert "PASS  last" in text
+
+
+def test_a_failing_last_step_fails_the_gate_and_is_reported(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    steps = [_step("first", "print('one')"), _step("last", "import sys; sys.exit(4)")]
+    assert gate.run_gate(steps, None) == 1
+    out = capsys.readouterr().out
+    assert "PASS  first" in out
+    assert "FAIL  last" in out
+
+
 def test_all_passing_steps_exit_zero(capsys: pytest.CaptureFixture[str]) -> None:
     assert gate.run_gate([_step("ok", "print('fine')")], None) == 0
     out = capsys.readouterr().out

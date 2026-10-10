@@ -201,11 +201,17 @@ def test_module_exports() -> None:
 # ---- agreement with the standard library on single components ------------------------------------
 
 
-def test_single_component_patterns_agree_with_fnmatch() -> None:
+# The default gate compares a smaller seeded sample with fnmatch; the 3000-case oracle is slow
+# only because the matcher is traced by the branch-coverage tracer (about 0.7 s).
+@pytest.mark.parametrize(
+    "cases",
+    [pytest.param(300, id="default"), pytest.param(3000, id="full", marks=pytest.mark.slow)],
+)
+def test_single_component_patterns_agree_with_fnmatch(cases: int) -> None:
     rng = random.Random(20261008)
     pattern_alphabet = ["a", "b", "c", "*", "?", "[ab]", "[!a]", "[a-b]", "[!b-c]", "."]
     name_alphabet = ["a", "b", "c", "."]
-    for _ in range(3000):
+    for _ in range(cases):
         pattern = "".join(rng.choice(pattern_alphabet) for _ in range(rng.randrange(1, 7)))
         name = "".join(rng.choice(name_alphabet) for _ in range(rng.randrange(0, 7)))
         if name == "" or pattern in (".", ".."):

@@ -15,6 +15,9 @@ from arch_helpers import check, make_tree, rules
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+# Slow: the gate's own "architecture" step runs the same checker over the same tree on every
+# default gate, so this copy only matters to --full and CI (about 1 s under coverage).
+@pytest.mark.slow
 def test_the_real_source_tree_passes() -> None:
     violations, count = arch.run_checks(REPO_ROOT / "src")
     assert [v.format() for v in violations] == []

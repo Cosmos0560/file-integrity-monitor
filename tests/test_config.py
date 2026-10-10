@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from typing import Any
 
@@ -191,6 +192,11 @@ def test_an_oversize_configuration_is_refused_before_it_is_parsed() -> None:
     big = b"version: 1\n#" + b"x" * (MAX_CONFIG_BYTES_CEILING)
     with pytest.raises(ConfigError, match="larger than 262144 bytes"):
         load_config(big, flavour=POSIX)
+
+
+# Slow: parsing a 256 KiB comment character by character in pure Python takes about 0.6 s.
+@pytest.mark.slow
+def test_a_configuration_exactly_at_the_size_limit_is_accepted() -> None:
     just_fits = b"version: 1\npaths:\n  - path: '/a'\n#" + b"x" * (MAX_CONFIG_BYTES_CEILING - 60)
     assert load_config(just_fits, flavour=POSIX).policy.roots
 
@@ -605,8 +611,15 @@ def test_complex_keys_are_refused() -> None:
     refuse("? {a: 1}\n: value\n", "plain text")
 
 
-def test_absurd_nesting_is_a_config_error_not_a_crash() -> None:
-    text = "a: " + "[" * 20000 + "]" * 20000 + "\n"
+# 2500 levels is already past twice Python's recursion limit, which is what a crash needs; the
+# 20000-level document costs seconds in the pure-Python YAML scanner, so it runs only in --full.
+@pytest.mark.parametrize(
+    "depth",
+    [pytest.param(2500, id="default"), pytest.param(20000, id="full", marks=pytest.mark.slow)],
+)
+def test_absurd_nesting_is_a_config_error_not_a_crash(depth: int) -> None:
+    assert depth > 2 * sys.getrecursionlimit()
+    text = "a: " + "[" * depth + "]" * depth + "\n"
     refuse(text, "nested too deeply|invalid YAML")
 
 

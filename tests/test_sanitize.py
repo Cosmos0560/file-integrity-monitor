@@ -119,9 +119,18 @@ def _random_text(rng: random.Random) -> str:
     return "".join(chars)
 
 
-def test_seeded_random_strings_round_trip_and_come_out_safe() -> None:
+# The default gate runs a smaller seeded sweep of the same generator; the full-size one is slow
+# only because every escape and unescape is traced by the branch-coverage tracer (about 1 s).
+SWEEP_SIZES = [
+    pytest.param(300, id="default"),
+    pytest.param(5000, id="full", marks=pytest.mark.slow),
+]
+
+
+@pytest.mark.parametrize("count", SWEEP_SIZES)
+def test_seeded_random_strings_round_trip_and_come_out_safe(count: int) -> None:
     rng = random.Random(20261008)
-    for _ in range(5000):
+    for _ in range(count):
         text = _random_text(rng)
         escaped = sanitize.escape(text)
         assert sanitize.unescape(escaped) == text
@@ -193,9 +202,10 @@ def test_scrub_removes_dangerous_characters_but_leaves_backslashes() -> None:
     assert sanitize.scrub("bad\x1b name" + chr(0x202E) + "\\keep") == "bad\\x1b name\\u202e\\keep"
 
 
-def test_scrub_is_idempotent_and_safe() -> None:
+@pytest.mark.parametrize("count", [pytest.param(200, id="default"), *SWEEP_SIZES[1:]])
+def test_scrub_is_idempotent_and_safe(count: int) -> None:
     rng = random.Random(7)
-    for _ in range(2000):
+    for _ in range(count):
         text = _random_text(rng)
         once = sanitize.scrub(text)
         assert sanitize.scrub(once) == once

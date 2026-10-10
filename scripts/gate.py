@@ -3,6 +3,10 @@
 Runs every step even when an earlier one fails, prints a summary and exits non-zero if any step
 failed. Do not pipe or redirect its output; use --log, which writes the log itself and keeps the
 exit status. The default run skips tests marked ``slow``; --full runs everything (as CI does).
+
+The last step (pytest) takes several times as long as all the others together, so it is started
+first and runs while the others do; its output is held back and printed after theirs. Every step
+still runs, in the same order in the output and the summary.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -154,7 +159,19 @@ def run_gate(steps: Sequence[Step], log: TextIO | None) -> int:
             log.flush()
 
     started = time.perf_counter()
-    results = [run_step(step, emit) for step in steps]
+    *front, last = steps
+    held: list[str] = []  # list.append is atomic, so the worker and this thread can share it
+    background: list[StepResult] = []
+    worker = threading.Thread(target=lambda: background.append(run_step(last, held.append)))
+    worker.start()
+    results = [run_step(step, emit) for step in front]
+    sent = 0
+    while worker.is_alive() or sent < len(held):
+        while sent < len(held):
+            emit(held[sent])
+            sent += 1
+        worker.join(timeout=0.05)
+    results.append(background[0] if background else StepResult(last.name, 1, 0.0))
     for line in format_summary(results, time.perf_counter() - started):
         emit(line)
     return 0 if all(r.passed for r in results) else 1
