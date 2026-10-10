@@ -31,6 +31,7 @@ from itertools import accumulate
 
 __all__ = [
     "InvalidEscapeError",
+    "clip_already_escaped",
     "clip_escaped",
     "csv_neutralize",
     "escape",
@@ -48,6 +49,7 @@ class InvalidEscapeError(ValueError):
 _ESCAPED_CATEGORIES = frozenset({"Cf", "Zl", "Zp", "Co", "Cn", "Cs"})
 _HEX_DIGITS = frozenset("0123456789abcdef")
 _ESCAPE_WIDTHS = {"x": 2, "y": 2, "u": 4, "U": 8}
+_MAX_ESCAPE_WIDTH = 10  # a backslash, the letter and at most eight hex digits
 _SURROGATE_ESCAPE_FIRST = 0xDC80
 _SURROGATE_ESCAPE_LAST = 0xDCFF
 _SURROGATE_ESCAPE_BASE = 0xDC00
@@ -132,6 +134,26 @@ def clip_escaped(text: str, limit: int) -> str:
     # Cumulative lengths only grow, so the pieces that fit are exactly a prefix.
     keep = sum(1 for total in accumulate(len(piece) for piece in pieces) if total <= budget)
     return "".join(pieces[:keep]) + _ELLIPSIS
+
+
+def clip_already_escaped(text: str, limit: int) -> str:
+    """Cut text that is already escaped to ``limit`` characters without ending inside an escape.
+
+    ``clip_escaped`` escapes raw text; this one is for text that went through ``escape`` or
+    ``scrub`` already (a finding's path or evidence), where escaping again would double its
+    backslashes. A cut ends in "...".
+    """
+    if len(text) <= limit:
+        return text
+    cut = max(limit - len(_ELLIPSIS), 0)
+    window_start = max(cut - _MAX_ESCAPE_WIDTH, 0)
+    backslash = text.rfind("\\", window_start, cut)
+    if backslash >= 0 and backslash + 1 < len(text) and text[backslash + 1] in _ESCAPE_WIDTHS:
+        width = _ESCAPE_WIDTHS[text[backslash + 1]]
+        digits = text[backslash + 2 : backslash + 2 + width]
+        if len(digits) == width and _HEX_DIGITS.issuperset(digits) and backslash + 2 + width > cut:
+            cut = backslash  # the cut would split a complete escape sequence
+    return text[:cut] + _ELLIPSIS
 
 
 def _decode_escape(text: str, start: int) -> tuple[str, int]:

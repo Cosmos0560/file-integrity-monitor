@@ -92,6 +92,7 @@ SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
             "fim.core.models",
             "fim.core.pathrules",
             "fim.core.perms",
+            "fim.core.sanitize",
         }
     ),
     "fim.core.errors": frozenset({"fim.core.sanitize"}),
@@ -116,6 +117,12 @@ SAME_LAYER_ALLOWED: Mapping[str, frozenset[str]] = {
     "fim.services.baseline_codec": frozenset({"fim.services.keystore"}),
     # check reuses the configuration, key and verified-baseline helpers of the baseline use case.
     "fim.app.check": frozenset({"fim.app.baseline"}),
+    # watch is check in a loop: the same helpers.
+    "fim.app.watch": frozenset({"fim.app.baseline"}),
+    # the demo drives the real use cases, so it cannot stage a different tool.
+    "fim.app.demo": frozenset({"fim.app.baseline", "fim.app.check"}),
+    # The CSV rows are built from the JSONL event document, so the two cannot drift apart.
+    "fim.render.csv_out": frozenset({"fim.render.jsonl"}),
 }
 
 # module -> the only modules that may import it (A013).

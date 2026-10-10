@@ -333,3 +333,34 @@ def test_every_codepoint_escapes_safely_and_round_trips() -> None:
 def test_clip_escaped_returns_text_that_fits_even_with_a_tiny_limit() -> None:
     assert sanitize.clip_escaped("ab", 3) == "ab"
     assert sanitize.clip_escaped("", 0) == ""
+
+
+# ---- clip_already_escaped ----------------------------------------------------------------------
+
+
+def test_clip_already_escaped_leaves_short_text_alone_and_cuts_long_text_with_dots() -> None:
+    assert sanitize.clip_already_escaped("short", 100) == "short"
+    cut = sanitize.clip_already_escaped("a" * 50, 20)
+    assert cut == "a" * 17 + "..."
+    assert len(cut) == 20
+
+
+def test_clip_already_escaped_never_ends_inside_an_escape_and_keeps_backslashes() -> None:
+    text = "C:" + "\\" + "dir" + sanitize.escape("\u202e") * 8
+    widths = {"x": 2, "y": 2, "u": 4, "U": 8}
+    boundaries = {0}
+    position = 0
+    while position < len(text):
+        if text[position] == "\\" and text[position + 1 : position + 2] in widths:
+            position += 2 + widths[text[position + 1]]
+        else:
+            position += 1
+        boundaries.add(position)
+    for limit in range(4, len(text)):
+        clipped = sanitize.clip_already_escaped(text, limit)
+        assert len(clipped) <= limit
+        body = clipped[:-3] if clipped.endswith("...") else clipped
+        assert text.startswith(body)
+        assert len(body) in boundaries  # the cut is between characters, never inside an escape
+    plain = "C:" + "\\" + "x"
+    assert sanitize.clip_already_escaped(plain, 100) == plain

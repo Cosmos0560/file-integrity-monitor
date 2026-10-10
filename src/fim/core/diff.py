@@ -63,12 +63,15 @@ from fim.core.perms import (
     describe_posix_mode,
     describe_windows_attributes,
 )
+from fim.core.sanitize import clip_already_escaped, scrub
 
 __all__ = [
     "DiffResult",
+    "baseline_integrity_finding",
     "build_report",
     "compare",
     "policy_drift_finding",
+    "resolved_finding",
 ]
 
 SUPPRESSED_DELETED_UNAVAILABLE = "deleted files under an unavailable monitored path"
@@ -86,10 +89,6 @@ _ISSUE_FINDINGS = {
 _WORLD_WRITE = 0o002
 _SETUID = 0o4000
 _SETGID = 0o2000
-_ELLIPSIS = "..."
-_MAX_ESCAPE_WIDTH = 10
-_ESCAPE_WIDTHS = {"x": 2, "y": 2, "u": 4, "U": 8}
-_HEX = frozenset("0123456789abcdef")
 _SHORT_HASH = 16
 
 
@@ -105,19 +104,7 @@ class DiffResult:
 # ---- small helpers -------------------------------------------------------------------------------
 
 
-def _clip(text: str, limit: int) -> str:
-    """Cut already-escaped text to ``limit`` characters without ending inside an escape."""
-    if len(text) <= limit:
-        return text
-    cut = max(limit - len(_ELLIPSIS), 0)
-    window_start = max(cut - _MAX_ESCAPE_WIDTH, 0)
-    backslash = text.rfind("\\", window_start, cut)
-    if backslash >= 0 and backslash + 1 < len(text) and text[backslash + 1] in _ESCAPE_WIDTHS:
-        width = _ESCAPE_WIDTHS[text[backslash + 1]]
-        digits = text[backslash + 2 : backslash + 2 + width]
-        if len(digits) == width and _HEX.issuperset(digits) and backslash + 2 + width > cut:
-            cut = backslash  # the cut would split a complete escape sequence
-    return text[:cut] + _ELLIPSIS
+_clip = clip_already_escaped
 
 
 def _fingerprint(record: FileRecord | None) -> dict[str, object] | None:
@@ -568,6 +555,44 @@ def policy_drift_finding(baseline_digest: str, config_digest: str) -> Finding:
             "used the baseline's policy. Run 'fim baseline --force' to adopt the new one"
         ),
         rule="",
+    )
+
+
+def baseline_integrity_finding(message: str) -> Finding:
+    """The critical notice ``watch`` raises when the baseline file stops verifying (PLAN.md D9).
+
+    The id comes from the message, so the same failure keeps one id from cycle to cycle and is
+    reported once, not every cycle.
+    """
+    text = clip_already_escaped(scrub(message), MAX_EVIDENCE_CHARS_CEILING)
+    return Finding(
+        finding_id=_finding_id({"integrity": text}),
+        kind=FindingKind.BASELINE_INTEGRITY,
+        path="",
+        severity=Severity.CRITICAL,
+        confidence=Confidence.HIGH,
+        changes=(),
+        evidence=text,
+        rule="",
+    )
+
+
+def resolved_finding(original: Finding) -> Finding:
+    """The event that says an earlier finding is no longer reported (``watch`` only).
+
+    It keeps the original's id, path and rule so a SIEM can pair the two, and says which kind
+    went away. It is informational: whether the cause was a revert or a new baseline, the
+    tool cannot tell.
+    """
+    return Finding(
+        finding_id=original.finding_id,
+        kind=FindingKind.RESOLVED,
+        path=original.path,
+        severity=Severity.INFO,
+        confidence=Confidence.HIGH,
+        changes=(),
+        evidence=f"no longer reported: {original.kind.value}",
+        rule=original.rule,
     )
 
 

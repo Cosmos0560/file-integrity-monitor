@@ -860,3 +860,45 @@ def test_a_link_whose_target_could_not_be_read_is_compared_by_what_is_known() ->
     finding = only(result, K.MODIFIED)
     assert (finding.changes[0].old, finding.changes[0].new) == (None, "x")
     assert run([unknown], [unknown]).findings == ()
+
+
+# ---- the events only watch makes ----------------------------------------------------------------
+
+
+def test_a_baseline_integrity_finding_is_critical_with_a_stable_id() -> None:
+    first = core_diff.baseline_integrity_finding("the baseline no longer verifies: the MAC")
+    again = core_diff.baseline_integrity_finding("the baseline no longer verifies: the MAC")
+    other = core_diff.baseline_integrity_finding("the baseline is gone")
+    assert first == again
+    assert first.finding_id != other.finding_id
+    assert first.kind is K.BASELINE_INTEGRITY
+    assert first.severity is S.CRITICAL
+    assert first.confidence is C.HIGH
+    assert first.path == ""
+    assert "the MAC" in first.evidence
+
+
+def test_a_baseline_integrity_message_is_scrubbed_and_clipped() -> None:
+    finding = core_diff.baseline_integrity_finding("bad\x1b[31m name\n" + "x" * 5000)
+    assert "\x1b" not in finding.evidence
+    assert "\n" not in finding.evidence
+    assert len(finding.evidence) <= MAX_EVIDENCE_CHARS_CEILING
+    assert finding.evidence.endswith("...")
+
+
+def test_a_resolved_finding_keeps_the_id_path_and_rule_and_names_the_old_kind() -> None:
+    original = make.finding(
+        finding_id="feedfacefeedface",
+        kind=K.DELETED,
+        path="/data/a.txt",
+        severity=S.HIGH,
+        rule="/data",
+    )
+    resolved = core_diff.resolved_finding(original)
+    assert resolved.finding_id == original.finding_id
+    assert resolved.path == original.path
+    assert resolved.rule == original.rule
+    assert resolved.kind is K.RESOLVED
+    assert resolved.severity is S.INFO
+    assert resolved.evidence == "no longer reported: deleted"
+    assert resolved.changes == ()
