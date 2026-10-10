@@ -109,6 +109,10 @@ Gate rules:
 - Gate steps, in order: `ruff check`, `ruff format --check`, `mypy --platform linux`,
   `mypy --platform win32`, `scripts/check_architecture.py`, `pytest` with branch coverage
   `--cov-fail-under=85`. The gate runs every step, prints a summary, and exits non-zero if any failed.
+  The pytest step starts first and runs beside the quick steps (ruff, mypy, architecture), whose
+  output is printed first; the report and the summary keep the order above, execution does not.
+- The default gate excludes `slow` tests, so its coverage can be lower than the full gate's. It
+  must reach 85% by itself; the number to quote in a phase report is the full gate's.
 - Never lower a threshold, add a broad ignore, or delete a test to make the gate pass.
   `# noqa`, `# type: ignore` and `# pragma: no cover` need a reason on the same line and are rare.
 - Stage files by explicit path, then commit. Commit messages: imperative subject, no trailers

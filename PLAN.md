@@ -768,3 +768,34 @@ report written. Tagging and pushing are yours.
   `clip_already_escaped` (the clipping `core/diff` had privately, now shared with the
   renderers); (12) `docs/siem-mapping.md` documents the fields with a drift test against the
   code and a real ingest into mini-siem's own `ingest` command.
+- v0.3.8 (2026-10-10): CI run #6 fix, the Linux check in WSL, and the owner's decisions of
+  2026-10-10 (details in docs/phase-reports.md). ACCEPTED by the owner on 2026-10-10: all
+  deviations of v0.3.6 and of v0.3.7, including that the gate's pytest step starts first and runs
+  beside the quick steps (CLAUDE.md section 3 now says so). Decisions and changes: (1) the sandbox
+  path rule is platform-independent: `fs/sandbox.py` accepts only relative paths whose components
+  are not empty, `.` or `..`, and contain no NUL, no `/`, no `\` and no `:`, on every OS (the Phase
+  5 rule skipped the colon on POSIX, which is why the three cases `C:/x`, `C:x` and `a:stream`
+  did not raise on Linux CI); the test is unchanged and now proves the rule on both platforms;
+  (2) audit of every other platform-conditional name or path check in `src/`: the Windows name
+  rules of `core/pathrules.py` (colon, `<>"|?*`, trailing space or dot, reserved device names,
+  `\` as a separator) apply under `Flavour.WINDOWS` only. They are kept that way on purpose:
+  the flavour is a parameter of a pure function that the tests run on every OS, and on POSIX these
+  are ordinary name characters that a monitor must be able to watch (`/sys/devices/pci0000:00`).
+  The POSIX flavour already refuses a `\` prefix, a `C:` drive prefix, URL-like text and `..`.
+  The one wording gap is CLAUDE.md section 4 invariant 3, which lists "Windows reserved device
+  names" without saying that this is checked for Windows paths only; the owner may want to say so
+  there. Everything else that tests `sys.platform` is a mechanism, not a name check: open flags
+  (`O_BINARY`, `O_NOFOLLOW`, `O_NONBLOCK`, `O_NOATIME`), uid and gid, the hard-link error codes,
+  the directory fsync, the raw stat fields and the demo's second hostile name (which Windows
+  cannot create, and which contains no colon); `safe_files._inside` uses the native `normcase`,
+  which is the file system's own rule; (3) a Linux check inside WSL is part of the process:
+  CLAUDE.md sections 1 and 3 allow one extra venv (`~/.venvs/fim-linux`, inside WSL, outside every
+  repository) and one clone (`~/fim-linux-check`), and require the full gate there as well as on
+  Windows before a phase is reported done. The interpreter is Ubuntu's `python3` 3.14.4, outside
+  the CI matrix 3.11 to 3.13, so this finds operating-system differences only; (4) the watch and
+  demo end-to-end tests (55 tests in `tests/test_watch.py`, `tests/test_cli_watch.py` and
+  `tests/test_demo.py`) are marked `slow` with a stated reason; the default gate keeps the
+  argument refusals, the help text, the sandbox tests and the staging failure. CI and `--full`
+  still run all of them. Consequence recorded plainly: the default gate's branch coverage is now
+  94.88% (it was 100.00%), because `app/watch.py` (28.24%) and `app/demo.py` (48.25%) are covered
+  mostly by tests that are now slow; the full gate still reports 100.00%.

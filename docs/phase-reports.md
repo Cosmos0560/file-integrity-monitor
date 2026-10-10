@@ -5,20 +5,20 @@ section 2. The last entry is what a new session reads first.
 
 ## In progress
 
-Nothing is in progress. Phase 5 is complete and committed locally; the Step 0 and Step 1 commits
-and the five Phase 5 commits are not pushed. Phase 6 (bench, threat model, README, release
-checks) has not been started and waits for the owner. Phase 6 starts from `docs/siem-mapping.md`
-and `docs/report-schema.md` (documented output), `app/watch.py` and `app/demo.py` (what the
-README shows with real output), and the Limitations list in PLAN.md section 4.
+Nothing is in progress. Phase 5 is complete, and the fixes after CI run #6 (the sandbox path rule,
+the WSL Linux check, the slow marks and the documentation of the owner's decisions) are committed
+locally and not pushed. Phase 6 (bench, threat model, README, release checks) has not been started
+and waits for the owner. Phase 6 starts from `docs/siem-mapping.md` and `docs/report-schema.md`
+(documented output), `app/watch.py` and `app/demo.py` (what the README shows with real output), and
+the Limitations list in PLAN.md section 4. Before any phase is reported done: the full gate on
+Windows and, through WSL, on Linux (CLAUDE.md section 3).
 
-Open questions for the owner after Phase 5 (details in the Phase 5 entry): accept the deviations
-of PLAN.md changelog v0.3.7 and still v0.3.6; decide whether CLAUDE.md section 3 should say that
-the gate may run pytest beside the quick steps (the report order is unchanged); the first Linux
-CI run of the 18 POSIX-only tests is still the main unknown; the default gate is about 50 s
-again after Phase 5's tests (see the Phase 5 entry for the options).
+Open question for the owner: CLAUDE.md section 4 invariant 3 lists "Windows reserved device names"
+without saying that they are refused for Windows paths only (PLAN.md changelog v0.3.8, item 2).
 
-Accepted by the owner earlier: the Phase 3 deviations of v0.3.4 except the incomplete-scan one
-(changed in v0.3.5), all Phase 2 deviations (v0.3.2, v0.3.3).
+Accepted by the owner: the deviations of v0.3.7 and v0.3.6 (on 2026-10-10, PLAN.md changelog
+v0.3.8), the Phase 3 deviations of v0.3.4 except the incomplete-scan one (changed in v0.3.5), all
+Phase 2 deviations (v0.3.2, v0.3.3).
 
 ## Phase 1 - Foundation, gate, CI, pure core (2026-10-08)
 
@@ -152,3 +152,67 @@ Tests added: 2443 collected now (2413 pass and 18 skip in the default gate, 12 s
 Real coverage: 100.00% branch coverage (3434 statements, 1000 branches, 0 missing) as printed by the gate on the default run, Windows, Python 3.13.14. The 18 POSIX-only tests are skipped here, so the POSIX-only lines are reached only through substituted platform values and the `hostile_names()` helper, not through a real Linux run. Default gate after Phase 5: 54.2, 55.2 and 48.8 s in total on three runs (pytest alone 44 to 55 s over six runs; the interleaved comparison with and without this phase's last trims gave 51.6 and 49.6 s); the full gate: 2425 passed, 18 skipped in 304 s (305 s with the quick steps). Phase 5 added about 9 s to the default gate.
 Known gaps: (1) the 18 POSIX-only tests (8 from Phase 2, 4 from Phase 3, 2 from Phase 4, 2 from Step 0 and 2 new in Phase 5) have never run on Linux; the next CI run is their first, and also the first real run of the Linux side of the Step 0 fix. (2) The default gate is about 50 s again; per-test cost is mostly Windows file operations and the coverage tracer, so further savings mean moving the end-to-end watch and demo tests to `slow`, which I did not do without your say. (3) `watch` is polling: a change made and reverted between two cycles is missed (Limitations list, Phase 6). (4) `watch` keeps at most `MAX_FINDINGS_REPORTED` finding ids; with more findings than that, the ones not listed cannot be tracked and a note says so. (5) The append log has no rotation and is fsynced once per batch, so a power cut can lose the batch in flight. (6) `docs/siem-mapping.md` is checked against the code and was checked once against mini-siem's live parser by hand; a later change in mini-siem is not detected by a test here. (7) The mini-siem ingest was done on Windows only. (8) The hostile names in the demo are shown escaped; whether a given terminal shows the escapes the same way is not tested beyond the cp1252 test of Phase 4. (9) Phase 4 gaps and earlier gaps still stand, except gap (6) of Phase 4 (the default gate drifting towards 60 s), which Step 1 addressed and Phase 5 partly undid.
 Deviations from PLAN.md: all awaiting your acceptance, also recorded in PLAN.md changelog v0.3.7: (1) `check --format jsonl|csv` and their notes on stderr; (2) `watch` options (`--format csv`, `--min-severity`, `--force`, `--config`) and the exit-code rule "3, else 4, else 1 if any finding was reported during the run, else 0"; (3) every failure to re-verify the baseline, including a validly signed baseline with a lower sequence number, is a `baseline_integrity` event raised once per distinct message, resolved when the baseline verifies again, with exit 3 sticky; a new valid baseline is adopted; (4) an incomplete scan reports no resolved events; (5) `resolved` events are `info` with the original's id; (6) the JSONL details listed in v0.3.7 item 7; (7) the append log's exact behaviour (one fsync per batch, no rotation); (8) the demo has one more step than PLAN.md lists (the tampered baseline) and no options; (9) the sandbox removes its tree with an lstat walk because `os.walk` enters junctions; (10) the architecture table edges and `clip_already_escaped`; (11) the gate runs pytest beside the quick steps (Step 1); (12) `docs/siem-mapping.md` carries the real ingest. Process lapses, plainly: the Step 0 commit trailer (amended before any push), and I wrote several test files through shell heredocs whose backslash handling turned `\u202e` into the real character three times; the hygiene test caught it each time before any commit and I replaced them with escape sequences; the guard hook also caught me piping the gate twice (both were blocked, nothing ran).
+
+## After Phase 5: CI run #6, the Linux check in WSL, the gate time (2026-10-10)
+
+Step 0, CI run #6 (3 failed, 2408 passed, all three Linux jobs; Windows green). The three failures
+were `test_paths_that_could_leave_the_sandbox_are_refused` with `"C:/x"`, `"C:x"` and `"a:stream"`:
+`fs/sandbox.py` refused a colon only when `os.sep != "/"`, so on POSIX it did not raise. Decision
+of the owner: the rule is the same on every OS. `_bad_component` now refuses `:` everywhere (the
+demo's paths are fixed strings and none contains a colon; no hostile name does either), the test is
+unchanged. Commit `028516a`. The search for other name or path checks that apply on one platform
+only is in PLAN.md changelog v0.3.8, item 2: the sandbox was the only one that consulted the
+operating system inside non-pure code; the Windows name rules of `core/pathrules.py` are keyed on
+the `Flavour` parameter, run in tests on every OS, and are kept Windows-only on purpose (a colon
+is a legal name character on POSIX, for example `/sys/devices/pci0000:00`); the rest are
+mechanisms (open flags, uid, hard-link error codes), not checks on names.
+
+Step 1, the Linux check. WSL 2 with Ubuntu 26.04 is available and reaches PyPI. Its `python3` is
+3.14.4 and the only interpreter there (3.11 to 3.13 would need `apt`, which I did not touch), and
+it has no `ensurepip`. So the venv `~/.venvs/fim-linux` was made with `python3 -m venv
+--without-pip`, and pip was bootstrapped from its own wheel downloaded from PyPI and checked
+against the sha256 of the PyPI JSON (pip 26.2.1), then `pip install -e ".[dev]"` (ruff 0.16.10,
+mypy 2.4.0, pytest 9.1.1, coverage 7.16.2, PyYAML 6.0.3). The repository is cloned to
+`~/fim-linux-check` in the WSL home, not under `/mnt/c`; it is refreshed with `git fetch` and
+`git reset --hard FETCH_HEAD`, which CLAUDE.md section 3 documents together with the rebuild
+steps. Results of `python scripts/gate.py --full` there (Linux, Python 3.14.4):
+- commit `028516a` (before the slow marks): 2411 passed, 17 skipped (16 `windows_only`, 1
+  junction test), 100.00% branch coverage, 17.6 s in total. This is the first real run of the 18
+  POSIX-only tests of Phases 2 to 5 and of the fix of the previous session; all pass.
+- commit `0687421` (final code): 2411 passed, 17 skipped, 100.00%, 12.1 s in total.
+Windows full gate on `0687421`: 2425 passed, 18 skipped (`posix_only`), 100.00%, 311.3 s in total
+(pytest 310.2 s; it was about 230 s in Phase 2, before the end-to-end tests of Phases 3 to 5).
+Commit `d14c343` holds the CLAUDE.md changes (sections 1 and 3).
+
+Step 2, the owner's decisions are recorded in PLAN.md changelog v0.3.8: all deviations of v0.3.6
+and v0.3.7 are accepted, including the gate's pytest step running beside the quick steps (CLAUDE.md
+section 3 describes it now). The watch and demo end-to-end tests are `slow` (commit `0687421`):
+55 tests, chosen by measured cost per test (every one that builds a real tree, key and signed
+baseline and runs the whole watch, check or demo took 0.09 to 0.33 s; every argument refusal,
+help text and sandbox test took 0.02 s or less and stays in the default gate). Default gate
+before and after, three interleaved runs each on this machine, total seconds:
+
+| | run 1 | run 2 | run 3 | mean | tests | default-run coverage |
+|---|---|---|---|---|---|---|
+| before | 50.8 | 54.5 | 56.6 | 54.0 | 2413 passed, 18 skipped, 12 deselected | 100.00% |
+| after | 43.7 | 50.0 | 42.5 | 45.4 | 2357 passed, 17 skipped, 69 deselected | 94.88% |
+
+The gate is about 9 s faster, not quite at "about 40 s": the best run was 42.5 s, and the machine's
+run-to-run noise is 5 to 8 s. The cost is stated plainly in the changelog: the default run's
+coverage fell from 100.00% to 94.88% because `app/watch.py` (28.24%) and `app/demo.py` (48.25%)
+are now covered mostly by slow tests; the gate still enforces 85% there, and the full gate (CI)
+still reports 100.00%. If the default run should keep a smoke test of the watch loop and of the
+demo, say so: it costs about 0.3 s.
+
+Process notes, plainly: the hook blocked one of my timing scripts because it redirected the
+gate's output; I rewrote it to use `--log` and no redirect. The three interleaved timing runs
+swapped the three test files in and out of `tests/`; the tree was restored afterwards and the
+diff is exactly the 55 marks and 3 comments.
+
+```
+Built: nothing new in src beyond the sandbox rule; a Linux check in WSL (venv, clone, documented commands); 55 end-to-end tests marked slow
+Tests added: 0 (2425 in the full gate on Windows, 2411 on Linux; the default gate runs 2357 and defers 69)
+Real coverage: full gate 100.00% on Windows (2425 passed, 18 skipped) and on Linux (2411 passed, 17 skipped); default gate 94.88%
+Known gaps: Linux ran on Python 3.14.4 only (3.11 to 3.13 are CI's); the default gate no longer covers most of app/watch.py and app/demo.py; invariant 3 wording; first CI run with these commits not yet seen
+Deviations from PLAN.md: none new (the owner's decisions are changelog v0.3.8)
+```
