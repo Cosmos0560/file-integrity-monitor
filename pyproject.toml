@@ -12,7 +12,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Otabek Yakubov" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
@@ -47,7 +47,18 @@ path = "src/fim/__init__.py"
 packages = ["src/fim"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "scripts", "docs", "README.md", "LICENSE", "SECURITY.md", "PLAN.md", "CLAUDE.md"]
+include = [
+    "src",
+    "tests",
+    "scripts",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "SECURITY.md",
+    "PLAN.md",
+    "CLAUDE.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
