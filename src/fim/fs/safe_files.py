@@ -20,6 +20,9 @@ is no check-then-write race; with ``force`` it replaces the target with ``os.rep
 replaces a link itself and never writes through it. The temporary file is removed on every path.
 On a file system without hard links (FAT, exFAT) the publish falls back to creating the final
 file directly with ``O_CREAT | O_EXCL`` and an fsync: still no-clobber, but not atomic.
+
+``watch`` appends its events to a log file opened by ``open_append_log``: created exclusively (or
+replaced atomically with ``force``), never through a link, one write per line.
 Residual risk, documented: a parent directory swapped between the checks and the rename.
 """
 
@@ -40,9 +43,11 @@ from fim.core.pathrules import Flavour, display_user_path, validate_user_path
 from fim.core.perms import entry_type, private_file_problem
 
 __all__ = [
+    "AppendLog",
     "FileTooLargeError",
     "ensure_can_write",
     "ensure_outside_roots",
+    "open_append_log",
     "path_identity",
     "read_own_file",
     "write_own_file",
@@ -242,11 +247,15 @@ def _sync_directory(directory: str) -> None:
                 os.close(descriptor)
 
 
-def _write_all(descriptor: int, data: bytes) -> None:
+def _write_bytes(descriptor: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
         written = os.write(descriptor, view)
         view = view[written:]
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    _write_bytes(descriptor, data)
     os.fsync(descriptor)
 
 
@@ -408,3 +417,106 @@ def _write_exclusive(path: str, data: bytes, mode: int, label: str) -> None:
         raise _failure(label, path, "written", exc) from None
     with contextlib.suppress(OSError):
         os.close(descriptor)
+
+
+# ---- the append log (watch) ----------------------------------------------------------------------
+
+
+def _append_flags(*, create: bool) -> int:
+    flags = os.O_WRONLY | os.O_APPEND
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    if sys.platform == "win32":
+        flags |= os.O_BINARY
+    else:
+        flags |= os.O_NOFOLLOW | os.O_CLOEXEC
+    return flags
+
+
+class AppendLog:
+    """An append-only log file that this tool created itself.
+
+    Each line is written with one ``os.write`` on a descriptor opened with ``O_APPEND``, so a line
+    is never split by another writer's output and a crash can lose only the unwritten tail; the
+    batch is fsynced once at the end of ``append``. There is no rotation (use logrotate or
+    similar): the file only grows.
+    """
+
+    def __init__(self, descriptor: int, path: str, label: str) -> None:
+        self._descriptor: int | None = descriptor
+        self._path = path
+        self._label = label
+
+    def append(self, lines: Sequence[str]) -> None:
+        """Write every line (the caller ends each one with its own newline), then fsync once."""
+        if self._descriptor is None:
+            raise FileAccessError(f"{self._label} '{_shown(self._path)}' is already closed")
+        try:
+            for line in lines:
+                _write_bytes(self._descriptor, line.encode("utf-8"))
+            os.fsync(self._descriptor)
+        except OSError as exc:
+            raise _failure(self._label, self._path, "written", exc) from None
+
+    def close(self) -> None:
+        if self._descriptor is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._descriptor)
+            self._descriptor = None
+
+    def __enter__(self) -> AppendLog:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+def open_append_log(
+    path: str,
+    *,
+    force: bool,
+    avoid_roots: Sequence[str] = (),
+    mode: int = _DEFAULT_MODE,
+    label: str = "log file",
+) -> AppendLog:
+    """Create a new log file for appending, or with ``force`` replace an existing regular file.
+
+    Without ``force`` the file is created with ``O_CREAT | O_EXCL`` (and ``O_NOFOLLOW`` on POSIX),
+    so an existing file or a planted link is refused. With ``force`` an empty file is put in place
+    atomically first (``write_own_file``, which replaces a link rather than writing through it and
+    refuses a link target) and then opened for appending; the open descriptor is compared with the
+    file just placed, so a swap in between is refused.
+    """
+    _check_writable(path, force, avoid_roots, label)
+    if not force:
+        try:
+            descriptor = os.open(path, _append_flags(create=True), mode)
+        except FileExistsError:
+            raise FileAccessError(
+                f"{label} '{_shown(path)}' already exists; use --force to replace it"
+            ) from None
+        except OSError as exc:
+            raise _failure(label, path, "created (does its directory exist?)", exc) from None
+        return AppendLog(descriptor, path, label)
+    write_own_file(path, b"", force=True, avoid_roots=avoid_roots, mode=mode, label=label)
+    placed = _lstat(path, label)
+    if placed is None or _is_link(placed) or not stat.S_ISREG(placed.st_mode):
+        raise FileAccessError(f"{label} '{_shown(path)}' was replaced while it was being opened")
+    try:
+        descriptor = os.open(path, _append_flags(create=False))
+    except OSError as exc:
+        raise _failure(label, path, "opened", exc) from None
+    try:
+        opened = os.fstat(descriptor)
+        same = (opened.st_dev, opened.st_ino) == (placed.st_dev, placed.st_ino)
+        if not same or _is_link(opened) or not stat.S_ISREG(opened.st_mode):
+            raise FileAccessError(
+                f"{label} '{_shown(path)}' was replaced while it was being opened"
+            )
+    except OSError as exc:
+        os.close(descriptor)
+        raise _failure(label, path, "examined", exc) from None
+    except FileAccessError:
+        os.close(descriptor)
+        raise
+    return AppendLog(descriptor, path, label)

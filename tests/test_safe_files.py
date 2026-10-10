@@ -999,3 +999,215 @@ def test_a_root_that_cannot_be_compared_is_not_a_match(tmp_path: Path) -> None:
     assert safe_files._inside(str(tmp_path), "relative/dir") is False
     assert safe_files._inside(str(tmp_path / "a"), str(tmp_path)) is True
     assert safe_files._inside(str(tmp_path), str(tmp_path / "a")) is False
+
+
+# ---- the append log ------------------------------------------------------------------------------
+
+
+def open_log(*args: Any, **kwargs: Any) -> safe_files.AppendLog:
+    return safe_files.open_append_log(*args, **kwargs)
+
+
+def test_a_new_log_is_created_and_lines_are_appended_in_order(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    with open_log(str(path), force=False) as log:
+        log.append(["one\n", "two\n"])
+        assert path.read_bytes() == b"one\ntwo\n"  # on disk before the log is closed
+        log.append(["three\n"])
+    assert path.read_bytes() == b"one\ntwo\nthree\n"
+    assert names(tmp_path) == ["events.jsonl"]
+
+
+def test_a_log_is_never_created_over_an_existing_file_without_force(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(b"precious")
+    with pytest.raises(FileAccessError, match="already exists; use --force"):
+        open_log(str(path), force=False)
+    assert path.read_bytes() == b"precious"
+
+
+def test_force_replaces_the_old_log_with_an_empty_one_and_leaves_no_temporary_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(b"old\n")
+    with open_log(str(path), force=True) as log:
+        assert path.read_bytes() == b""
+        log.append(["new\n"])
+    assert path.read_bytes() == b"new\n"
+    assert names(tmp_path) == ["events.jsonl"]
+
+
+def test_every_line_is_one_write_and_a_batch_is_synced_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writes: list[bytes] = []
+    syncs: list[int] = []
+    real_write, real_fsync = os.write, os.fsync
+    path = tmp_path / "events.jsonl"
+    log = open_log(str(path), force=False)
+
+    def spy_write(descriptor: int, data: Any) -> int:
+        writes.append(bytes(data))
+        return real_write(descriptor, data)
+
+    def spy_fsync(descriptor: int) -> None:
+        syncs.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.write", spy_write)
+    monkeypatch.setattr("fim.fs.safe_files.os.fsync", spy_fsync)
+    log.append(["a\n", "b\n", "c\n"])
+    log.close()
+    assert writes == [b"a\n", b"b\n", b"c\n"]
+    assert len(syncs) == 1
+
+
+def test_a_short_write_is_continued_until_the_line_is_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_write = os.write
+
+    def two_bytes_at_a_time(descriptor: int, data: Any) -> int:
+        return real_write(descriptor, bytes(data)[:2])
+
+    path = tmp_path / "events.jsonl"
+    log = open_log(str(path), force=False)
+    monkeypatch.setattr("fim.fs.safe_files.os.write", two_bytes_at_a_time)
+    log.append(["abcdefg\n"])
+    log.close()
+    assert path.read_bytes() == b"abcdefg\n"
+
+
+def test_a_write_failure_is_a_file_access_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = open_log(str(tmp_path / "events.jsonl"), force=False)
+    monkeypatch.setattr("fim.fs.safe_files.os.write", raising(OSError(errno.ENOSPC, "full")))
+    with pytest.raises(FileAccessError, match=r"could not be written \(ENOSPC\)"):
+        log.append(["x\n"])
+    log.close()
+
+
+def test_a_closed_log_refuses_more_lines_and_closing_twice_is_harmless(tmp_path: Path) -> None:
+    log = open_log(str(tmp_path / "events.jsonl"), force=False)
+    log.close()
+    log.close()
+    with pytest.raises(FileAccessError, match="already closed"):
+        log.append(["x\n"])
+
+
+def test_a_log_inside_a_monitored_root_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "watched"
+    root.mkdir()
+    with pytest.raises(PathRuleError, match="must not be inside a monitored path"):
+        open_log(str(root / "events.jsonl"), force=False, avoid_roots=[str(root)])
+    assert names(root) == []
+
+
+def test_a_log_in_a_missing_directory_is_a_file_access_error(tmp_path: Path) -> None:
+    with pytest.raises(FileAccessError, match="could not be created"):
+        open_log(str(tmp_path / "no-such-dir" / "events.jsonl"), force=False)
+
+
+@pytest.mark.parametrize("raw", ["\\\\server\\share\\log", "http://example.com/log", "a/../b", ""])
+def test_hostile_log_paths_are_refused_before_any_io(raw: str) -> None:
+    with pytest.raises(PathRuleError):
+        safe_files.open_append_log.__wrapped__(raw, force=False)  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires_symlinks
+@pytest.mark.parametrize("force", [False, True])
+def test_a_log_path_that_is_a_link_is_refused_even_with_force(tmp_path: Path, force: bool) -> None:
+    target = tmp_path / "target"
+    target.write_bytes(b"keep")
+    link = tmp_path / "events.jsonl"
+    os.symlink(target, link)
+    with pytest.raises(FileAccessError):
+        open_log(str(link), force=force)
+    assert target.read_bytes() == b"keep"
+
+
+def test_a_swap_between_placing_and_opening_the_forced_log_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(b"old")
+    real_open = os.open
+
+    def swap_then_open(target: str, flags: int, *a: Any, **k: Any) -> int:
+        if Path(target).name == "events.jsonl" and not flags & os.O_EXCL:
+            # Someone replaces the file we just placed. The old one is renamed, not deleted, so
+            # its inode number cannot be handed to the new file (ext4 reuses freed numbers).
+            os.rename(target, target + ".moved")
+            Path(target).write_bytes(b"other")
+        return real_open(target, flags, *a, **k)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.open", swap_then_open)
+    with pytest.raises(FileAccessError, match="replaced while it was being opened"):
+        open_log(str(path), force=True)
+    assert path.read_bytes() == b"other"
+
+
+def test_the_log_module_exports() -> None:
+    assert {"AppendLog", "open_append_log"} <= set(safe_files.__all__)
+
+
+def test_append_flags_are_exclusive_when_creating_and_never_follow_links_on_posix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pretend(monkeypatch, "linux")
+    created = safe_files._append_flags(create=True)
+    reopened = safe_files._append_flags(create=False)
+    assert created == os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_EXCL | O_NOFOLLOW | O_CLOEXEC
+    assert reopened == os.O_WRONLY | os.O_APPEND | O_NOFOLLOW | O_CLOEXEC
+    pretend(monkeypatch, "win32")
+    assert safe_files._append_flags(create=True) == (
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_EXCL | O_BINARY
+    )
+
+
+def test_a_file_that_appears_between_the_check_and_the_create_is_not_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("fim.fs.safe_files.os.open", raising(FileExistsError(errno.EEXIST, "x")))
+    with pytest.raises(FileAccessError, match="already exists; use --force"):
+        open_log(str(tmp_path / "events.jsonl"), force=False)
+
+
+def test_a_forced_log_that_vanishes_before_it_is_opened_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("fim.fs.safe_files._lstat", lambda *_args: None)
+    with pytest.raises(FileAccessError, match="replaced while it was being opened"):
+        open_log(str(tmp_path / "events.jsonl"), force=True)
+
+
+def test_a_forced_log_that_cannot_be_opened_or_examined_is_a_file_access_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "events.jsonl"
+    real_open = os.open
+
+    def deny_the_reopen(target: str, flags: int, *a: Any, **k: Any) -> int:
+        if Path(target).name == "events.jsonl" and not flags & os.O_EXCL:
+            raise PermissionError(errno.EACCES, "denied")
+        return real_open(target, flags, *a, **k)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.open", deny_the_reopen)
+    with pytest.raises(FileAccessError, match=r"could not be opened \(EACCES\)"):
+        open_log(str(path), force=True)
+    monkeypatch.undo()
+
+    closed: list[int] = []
+    real_close = os.close
+
+    def note_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr("fim.fs.safe_files.os.fstat", raising(OSError(errno.EIO, "io")))
+    monkeypatch.setattr("fim.fs.safe_files.os.close", note_close)
+    with pytest.raises(FileAccessError, match=r"could not be examined \(EIO\)"):
+        open_log(str(path), force=True)
+    assert closed  # the descriptor was not leaked
