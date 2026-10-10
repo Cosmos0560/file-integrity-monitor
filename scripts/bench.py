@@ -48,7 +48,8 @@ from fim.app.baseline import (
     run_init_key,
 )
 from fim.app.check import CheckRequest, run_check
-from fim.core.limits import DEFAULT_LIMITS, MAX_FILES_CEILING, MIB
+from fim.core.errors import LimitReachedError
+from fim.core.limits import DEFAULT_LIMITS, MAX_FILES_CEILING, MAX_RUN_SECONDS_CEILING, MIB
 from fim.core.models import Baseline, BaselineHeader, HashStatus, Policy, RootPolicy, SymlinkPolicy
 from fim.core.pathrules import Flavour, validate_user_path
 from fim.core.policy import build_policy
@@ -59,6 +60,7 @@ from fim.services.keystore import decode_key_file, encode_key_file, generate_key
 from fim.services.scanner import scan
 
 FILES_PER_DIRECTORY = 100
+BENCH_RUN_SECONDS = MAX_RUN_SECONDS_CEILING  # a slow first run may take a quarter of an hour
 SMALL_FILE_BYTES = 1024
 
 
@@ -231,7 +233,9 @@ class Workspace:
             f"key_file: {json.dumps(str(self.key))}\n"
             "paths:\n"
             f"  - path: {json.dumps(str(self.watched))}\n"
-            "    severity: high\n",
+            "    severity: high\n"
+            "limits:\n"
+            f"  max_run_seconds: {BENCH_RUN_SECONDS}\n",
             encoding="utf-8",
         )
 
@@ -283,7 +287,11 @@ def small_workspace(base: Path, count: int) -> Workspace:
 def bench_throughput(
     base: Path, files: Sequence[int], large: Sequence[int], repeats: int
 ) -> dict[int, Workspace]:
-    """Time baseline and check; return the trees so the memory pass can reuse them."""
+    """Time baseline and check; return the trees so the memory pass can reuse them.
+
+    Rows are printed as they are measured: a first run over a big tree can take a quarter of an
+    hour, and a table printed at the end would be lost if the run is interrupted.
+    """
     clock = SystemClock()
     trees: dict[int, Workspace] = {}
     print(f"## Many small files ({SMALL_FILE_BYTES} bytes each)\n")
@@ -291,9 +299,23 @@ def bench_throughput(
         "The first baseline of a tree is shown apart from the later ones: on a machine with "
         "real-time\nmalware protection every file is scanned the first time it is opened, which "
         "can dominate a first run\nover files that were just written. Later runs and every check "
-        f"are warm ({repeats} runs of each, median and range).\n"
+        f"are warm ({repeats} runs of each, median and range). The configuration raises "
+        f"`max_run_seconds`\nto its ceiling of {BENCH_RUN_SECONDS}, so that a slow first run can "
+        "finish instead of stopping at the default budget.\n"
     )
-    rows: list[list[str]] = []
+    header = [
+        "files",
+        "records",
+        "baseline, first run s",
+        "baseline, later runs s",
+        "records/s",
+        "check s",
+        "records/s",
+        "baseline MiB",
+        "bytes/record",
+    ]
+    print("| " + " | ".join(header) + " |", flush=True)
+    print("|" + "|".join("---" for _ in header) + "|", flush=True)
     for count in files:
         workspace = small_workspace(base, count)
         trees[count] = workspace
@@ -301,51 +323,40 @@ def bench_throughput(
         check_times: list[float] = []
         size = 0
         records = 0
-        for _ in range(repeats + 1):
-            elapsed, outcome = timed(partial(run_baseline, workspace.baseline_request(), clock))
-            baseline_times.append(elapsed)
-            size, records = outcome.size_bytes, outcome.records
+        try:
+            for _ in range(repeats + 1):
+                elapsed, outcome = timed(partial(run_baseline, workspace.baseline_request(), clock))
+                baseline_times.append(elapsed)
+                size, records = outcome.size_bytes, outcome.records
+        except LimitReachedError as exc:
+            print(f"| {count:,} | - | stopped: {exc.message[:60]} | - | - | - | - | - | - |")
+            continue
         for _ in range(repeats):
             elapsed, checked = timed(partial(run_check, workspace.check_request(), clock))
             check_times.append(elapsed)
             if checked.report.findings or checked.exit_code != 0:
                 raise SystemExit("the benchmark tree changed while it was being measured")
         first, later = baseline_times[0], baseline_times[1:]
-        rows.append(
-            [
-                f"{count:,}",
-                f"{records:,}",
-                seconds(first),
-                summarise(later),
-                f"{records / statistics.median(later):,.0f}",
-                summarise(check_times),
-                f"{records / statistics.median(check_times):,.0f}",
-                mib(size),
-                f"{size / records:,.0f}",
-            ]
-        )
-    print(
-        table(
-            [
-                "files",
-                "records",
-                "baseline, first run s",
-                "baseline, later runs s",
-                "records/s",
-                "check s",
-                "records/s",
-                "baseline MiB",
-                "bytes/record",
-            ],
-            rows,
-        )
-    )
+        cells = [
+            f"{count:,}",
+            f"{records:,}",
+            seconds(first),
+            summarise(later),
+            f"{records / statistics.median(later):,.0f}",
+            summarise(check_times),
+            f"{records / statistics.median(check_times):,.0f}",
+            mib(size),
+            f"{size / records:,.0f}",
+        ]
+        print("| " + " | ".join(cells) + " |", flush=True)
     print("\n(records = files + directories; 100 files to a directory, two levels deep)\n")
 
     if large:
         print("## One large file\n")
         reference = hashlib_reference()
-        rows = []
+        header = ["file MiB", "baseline, first run s", "baseline, later runs s", "MiB/s"]
+        print("| " + " | ".join(header) + " |", flush=True)
+        print("|" + "|".join("---" for _ in header) + "|", flush=True)
         for size_mib in large:
             workspace = Workspace(base, f"large-{size_mib}")
             make_large_file(workspace.watched / "big.bin", size_mib * MIB)
@@ -357,16 +368,14 @@ def bench_throughput(
                 )
                 times.append(elapsed)
             first, later = times[0], times[1:]
-            rows.append(
-                [
-                    f"{size_mib}",
-                    seconds(first),
-                    summarise(later),
-                    f"{size_mib / statistics.median(later):,.0f}",
-                ]
-            )
+            cells = [
+                f"{size_mib}",
+                seconds(first),
+                summarise(later),
+                f"{size_mib / statistics.median(later):,.0f}",
+            ]
+            print("| " + " | ".join(cells) + " |", flush=True)
             shutil.rmtree(workspace.base)
-        print(table(["file MiB", "baseline, first run s", "baseline, later runs s", "MiB/s"], rows))
         print(
             "\nMiB/s is the file size over the median later run, so it includes the fixed cost of "
             "a baseline\n(configuration, key, one write). Reference: hashlib.sha256 over memory, "
@@ -610,7 +619,18 @@ def bench_baseline_load(base: Path, record_counts: Sequence[int]) -> None:
         "Peak working set is what the operating system reports for the process; "
         "tracemalloc is Python's own count.\n"
     )
-    rows: list[list[str]] = []
+    header = [
+        "records",
+        "baseline MiB",
+        "load s",
+        "load peak working set MiB",
+        "load tracemalloc MiB",
+        "check s",
+        "check peak working set MiB",
+        "check tracemalloc MiB",
+    ]
+    print("| " + " | ".join(header) + " |", flush=True)
+    print("|" + "|".join("---" for _ in header) + "|", flush=True)
     for count in record_counts:
         directory = base / f"load-{count}"
         directory.mkdir()
@@ -625,23 +645,8 @@ def bench_baseline_load(base: Path, record_counts: Sequence[int]) -> None:
                 mib(peak_set) if peak_set is not None else "n/a",
                 mib(traced["tracemalloc_peak"]),
             ]
-        rows.append(cells)
+        print("| " + " | ".join(cells) + " |", flush=True)
         shutil.rmtree(directory)
-    print(
-        table(
-            [
-                "records",
-                "baseline MiB",
-                "load s",
-                "load peak working set MiB",
-                "load tracemalloc MiB",
-                "check s",
-                "check peak working set MiB",
-                "check tracemalloc MiB",
-            ],
-            rows,
-        )
-    )
     default_files = DEFAULT_LIMITS.max_files
     print(f"\n(MAX_FILES ceiling {MAX_FILES_CEILING:,}; default MAX_FILES {default_files:,})\n")
 
