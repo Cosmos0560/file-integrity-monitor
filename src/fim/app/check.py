@@ -37,14 +37,26 @@ from fim.core.limits import DEFAULT_LIMITS
 from fim.core.models import Finding, IssueKind, Report, ScanIssue, Severity
 from fim.fs import safe_files
 from fim.platform import hostinfo
+from fim.render.csv_out import render_csv
 from fim.render.json_out import render_json
+from fim.render.jsonl import EventContext, render_jsonl
 from fim.render.table import render_table
 from fim.services import keystore
 from fim.services.scanner import FileSystemView, scan
 
-__all__ = ["FORMATS", "CheckOutcome", "CheckRequest", "exit_code_for", "run_check"]
+__all__ = [
+    "FORMATS",
+    "FORMATS_WITH_NOTES",
+    "CheckOutcome",
+    "CheckRequest",
+    "exit_code_for",
+    "run_check",
+]
 
-FORMATS = ("table", "json")
+FORMATS = ("table", "json", "jsonl", "csv")
+# These two carry the notes and warnings inside the text; jsonl and csv are data streams, so the
+# CLI says them on stderr instead.
+FORMATS_WITH_NOTES = ("table", "json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +77,7 @@ class CheckOutcome:
     text: str | None  # the rendered report, unless it was written to ``output_path``
     output_path: str | None
     exit_code: ExitCode
+    notes_in_text: bool = True  # False for jsonl and csv: the notes must be shown separately
 
 
 def exit_code_for(report: Report) -> ExitCode:
@@ -143,11 +156,20 @@ def run_check(
         *verified.warnings,
         *_incomplete_notes(result.issues, baseline.header.complete),
     )
-    text = (
-        render_json(report, notes)
-        if request.output_format == "json"
-        else render_table(report, notes)
+    context = EventContext(
+        timestamp=report.generated_at,
+        host=baseline.header.host,
+        baseline_sequence=baseline.header.sequence,
+        tool_version=report.tool_version,
     )
+    if request.output_format == "json":
+        text = render_json(report, notes)
+    elif request.output_format == "jsonl":
+        text = render_jsonl(report.findings, context)
+    elif request.output_format == "csv":
+        text = render_csv(report.findings, context)
+    else:
+        text = render_table(report, notes)
     if output_path is not None:
         safe_files.write_own_file(
             output_path,
@@ -165,4 +187,5 @@ def run_check(
         text=text_out,
         output_path=output_path,
         exit_code=exit_code_for(report),
+        notes_in_text=request.output_format in FORMATS_WITH_NOTES,
     )

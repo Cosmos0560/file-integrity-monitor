@@ -341,6 +341,9 @@ def test_no_option_takes_a_key_value() -> None:
             "--format",
             "--output",
             "--min-severity",
+            "--interval",
+            "--max-cycles",
+            "--repeat",
         }
 
 

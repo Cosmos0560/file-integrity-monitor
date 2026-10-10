@@ -1,9 +1,9 @@
 """Command line entry point. This is the only place that prints.
 
-Commands so far: ``init-key``, ``baseline`` and ``check``. Every error the tool raises on purpose
-is a ``FimError`` and leaves through here as one line on stderr and its exit code (PLAN.md section
-1.5); the code never lets a traceback carry a file name to the terminal. Everything printed from
-the filesystem or the user's paths goes through the sanitiser first.
+Commands: ``init-key``, ``baseline``, ``check`` and ``watch``. Every error the tool
+raises on purpose is a ``FimError`` and leaves through here as one line on stderr and its exit
+code (PLAN.md section 1.5); the code never lets a traceback carry a file name to the terminal.
+Everything printed from the filesystem or the user's paths goes through the sanitiser first.
 """
 
 from __future__ import annotations
@@ -22,10 +22,16 @@ from fim.app.baseline import (
     run_init_key,
 )
 from fim.app.check import FORMATS, CheckRequest, run_check
+from fim.app.watch import WATCH_FORMATS, WatchRequest, run_watch
 from fim.core.errors import ExitCode, FimError
+from fim.core.limits import (
+    WATCH_INTERVAL_DEFAULT_SECONDS,
+    WATCH_INTERVAL_MAX_SECONDS,
+    WATCH_INTERVAL_MIN_SECONDS,
+)
 from fim.core.models import Severity
 from fim.core.pathrules import display_user_path
-from fim.platform.clock import SystemClock
+from fim.platform.clock import SystemClock, SystemSleeper
 from fim.platform.hostinfo import path_flavour
 
 PROG = "fim"
@@ -120,6 +126,69 @@ def build_parser() -> argparse.ArgumentParser:
         help="hide findings below this severity (default: info, nothing hidden)",
     )
     check.set_defaults(handler=_check)
+
+    watch = commands.add_parser(
+        "watch",
+        allow_abbrev=False,
+        help="check on an interval and report only what is new, until stopped",
+        description=(
+            "Repeat 'check' every --interval seconds (measured from the end of one cycle to the "
+            "start of the next). The first cycle reports every finding, later ones only new "
+            "findings and 'resolved' events; --repeat reports everything every cycle. The "
+            "baseline file is verified again each cycle; if it stops verifying, a critical "
+            "baseline_integrity event is raised, the last verified baseline stays in use, and "
+            "the exit code is 3. Stop with Ctrl-C. Exit codes as for check."
+        ),
+    )
+    watch.add_argument(
+        "--baseline", required=True, metavar="PATH", help="baseline to check against"
+    )
+    watch.add_argument(
+        "--key-file", metavar="PATH", help="key file (overrides key_file in the configuration)"
+    )
+    watch.add_argument(
+        "--config",
+        metavar="FILE",
+        help="optional: the key location and a policy drift check (never changes what is scanned)",
+    )
+    watch.add_argument(
+        "--interval",
+        type=float,
+        default=WATCH_INTERVAL_DEFAULT_SECONDS,
+        metavar="SECONDS",
+        help=(
+            f"pause between cycles, {WATCH_INTERVAL_MIN_SECONDS} to "
+            f"{WATCH_INTERVAL_MAX_SECONDS} (default: {WATCH_INTERVAL_DEFAULT_SECONDS})"
+        ),
+    )
+    watch.add_argument(
+        "--max-cycles",
+        type=int,
+        metavar="N",
+        help="stop after N cycles (default: run until stopped)",
+    )
+    watch.add_argument(
+        "--repeat",
+        action="store_true",
+        help="report every finding in every cycle, not only new ones",
+    )
+    watch.add_argument(
+        "--format", choices=WATCH_FORMATS, default="jsonl", help="event format (default: jsonl)"
+    )
+    watch.add_argument(
+        "--output",
+        metavar="PATH",
+        help="append events to this new log file instead of stdout (no rotation)",
+    )
+    watch.add_argument("--force", action="store_true", help="replace an existing --output file")
+    watch.add_argument(
+        "--min-severity",
+        choices=[severity.label for severity in Severity],
+        default=Severity.INFO.label,
+        help="hide findings below this severity (default: info, nothing hidden)",
+    )
+    watch.set_defaults(handler=_watch)
+
     return parser
 
 
@@ -198,10 +267,47 @@ def _check(args: argparse.Namespace) -> int:
     if outcome.output_path is not None:
         total = sum(count for _, count in outcome.report.summary.by_kind)
         print(f"report written: {_shown(outcome.output_path)} ({total} findings)")
+    if outcome.output_path is not None or not outcome.notes_in_text:
         for note in outcome.notes:
             _warn(note)
         if not outcome.report.complete:
             _warn("the check was incomplete: the result may miss changes")
+        if outcome.report.truncated:
+            _warn(
+                f"only the first {len(outcome.report.findings)} findings are listed; "
+                "the summary counts are exact"
+            )
+    return int(outcome.exit_code)
+
+
+def _emit(text: str) -> None:
+    print(text, end="", flush=True)
+
+
+def _watch(args: argparse.Namespace) -> int:
+    outcome = run_watch(
+        WatchRequest(
+            baseline_path=args.baseline,
+            key_file=args.key_file,
+            config_path=args.config,
+            interval_seconds=args.interval,
+            max_cycles=args.max_cycles,
+            repeat=args.repeat,
+            output_format=args.format,
+            output_path=args.output,
+            force=args.force,
+            min_severity=Severity.from_label(args.min_severity),
+        ),
+        SystemClock(),
+        SystemSleeper(),
+        emit=_emit,
+        notify=_warn,
+    )
+    stopped = "interrupted" if outcome.interrupted else "finished"
+    print(
+        f"fim watch {stopped}: {outcome.cycles} cycles, {outcome.events} events written",
+        file=sys.stderr,
+    )
     return int(outcome.exit_code)
 
 
