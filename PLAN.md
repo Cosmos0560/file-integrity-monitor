@@ -728,3 +728,43 @@ report written. Tagging and pushing are yours.
   document and the code disagree; (5) a key file inside one of the baseline's own monitored paths
   is refused by `check` once the baseline is verified (the roots are only known then); (6) the
   PreToolUse hook of Step 1a covers the Bash tool only, not the PowerShell tool.
+- v0.3.7 (2026-10-10): CI run #5 fix, gate speed, and Phase 5 implementation notes, deviations
+  recorded for your acceptance (details in docs/phase-reports.md; the Phase 4 deviations of
+  v0.3.6 still await your acceptance as well): (1) the Linux CI failure of Phase 4 was a test and
+  a decision that read `winerror` on every platform; `winerror` is Windows-only, so
+  `safe_files._hard_links_unsupported` now reads it only under `sys.platform == "win32"` and the
+  errno values and Win32 codes that count as "no hard links" are documented where they are
+  listed; (2) the default gate: the pytest step now starts first and runs while ruff, mypy and
+  the architecture check do (their output is printed first, in the same order, so CLAUDE.md
+  section 3's "steps in order" holds for the report and the summary, not for execution), the
+  path guard reads each function signature once, the seeded sweeps run a smaller sample in the
+  default gate and their full size as `slow` (sanitiser round trip and scrub, the glob oracle,
+  YAML nesting), and two tests are `slow` with a stated reason (the real-tree architecture test,
+  which the gate's own architecture step repeats, and the 256 KiB at-the-limit configuration);
+  (3) `fim check --format` also takes `jsonl` and `csv`, and for those two the notes and
+  warnings go to stderr, because the output is a data stream; (4) `fim watch` takes `--baseline`
+  (required), `--key-file`, `--config`, `--interval` (10 to 86 400, default 300), `--max-cycles`,
+  `--repeat`, `--format jsonl|csv` (default jsonl; D9 names only JSONL, CSV was added because the
+  phase's definition of done lists all four formats), `--output` (an append log), `--force` and
+  `--min-severity`; (5) beyond D9: every failure to re-verify the baseline file (a bad MAC, a
+  missing or unreadable file, a rollback caught by the anchor, or a validly signed baseline with
+  a lower sequence number than the one in use, which the anchor cannot catch when it is missing)
+  becomes one `baseline_integrity` event, raised once per distinct message, resolved when the
+  baseline verifies again, with exit 3 sticky for the run; a new valid baseline with a higher
+  sequence is adopted; a scan that did not finish reports no `resolved` events and keeps the
+  earlier ones; the exit code at stop is 3, else 4 if any scan was incomplete, else 1 if any
+  finding was reported during the run, else 0; (6) `resolved` events carry the original's id,
+  path and rule with severity `info`; `baseline_integrity` is `critical` and has no path;
+  (7) the JSONL shape is D12 as written, with `path` and `path_sha256` absent for findings that
+  name no path, `path_truncated` always present with a path, and `baseline_sequence` the only
+  integer; (8) the append log of section 1.4 is `safe_files.open_append_log` and `AppendLog`:
+  exclusive create (or atomic replace with `--force`), never through a link, one write per line,
+  one fsync per batch, no rotation; (9) `fim demo` runs the PLAN's scripted steps and one more, a
+  tampered baseline that `check` must refuse; it takes no options; the sandbox removes its tree
+  with an lstat walk because `os.walk` descends into Windows junctions, which a test found
+  before the code was committed; (10) architecture table: same-layer edges added for
+  `core/diff` to `core/sanitize`, `render/csv_out` to `render/jsonl`, `app/watch` to
+  `app/baseline` and `app/demo` to `app/baseline` and `app/check`; (11) `core/sanitize` gained
+  `clip_already_escaped` (the clipping `core/diff` had privately, now shared with the
+  renderers); (12) `docs/siem-mapping.md` documents the fields with a drift test against the
+  code and a real ingest into mini-siem's own `ingest` command.
