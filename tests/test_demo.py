@@ -125,6 +125,19 @@ def transcript(tmp_path_factory: pytest.TempPathFactory) -> str:
     return outcome.text
 
 
+# The one whole-demo test that stays in the default gate (about 0.3 s): its own run, so it does not
+# build the module-scoped transcript the slow tests share.
+def test_smoke_demo_runs_finds_the_changes_refuses_the_tampered_baseline_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    outcome = run_demo(FakeClock(), base_directory=str(tmp_path))
+    assert outcome.exit_code is ExitCode.OK
+    assert outcome.workspace_removed
+    assert all(kind.value in outcome.text for kind in EXPECTED_KINDS)
+    assert "refused, exit code 3" in outcome.text
+    assert listing(tmp_path) == []
+
+
 @pytest.mark.slow
 def test_the_demo_shows_every_expected_finding_kind_and_the_refusal(transcript: str) -> None:
     for kind in EXPECTED_KINDS:

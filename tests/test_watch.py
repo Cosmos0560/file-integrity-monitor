@@ -122,6 +122,18 @@ def modify(ws: Workspace, name: str, content: bytes) -> Callable[[], object]:
     return lambda: (ws.watched / name).write_bytes(content)
 
 
+# The one end-to-end watch test that stays in the default gate (about 0.15 s), so that the default
+# run still exercises app/watch.py through the real scanner, check and renderer. The variants are
+# slow tests below.
+def test_smoke_watch_reports_a_change_once_and_stops_after_two_cycles(ws: Workspace) -> None:
+    make_baseline(ws)
+    run = watch(ws, actions=[modify(ws, "file0.txt", b"changed during the watch\n")])
+    assert run.names() == [("modified", "file0.txt")]
+    assert run.outcome.cycles == 2
+    assert run.sleeper.sleeps == [30]
+    assert run.outcome.exit_code is ExitCode.FINDINGS
+
+
 # ---- delta output --------------------------------------------------------------------------------
 
 
