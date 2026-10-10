@@ -128,6 +128,14 @@ Gate rules:
 3. Every user-supplied path (config roots, `--baseline`, `--key-file`, `--output`, `--config`)
    refuses UNC paths, `\\?\` and `\\.\` device paths, Windows reserved device names, drive-relative
    paths like `C:foo`, and anything URL-like (`scheme://`, `file:`).
+   The Windows name rules (reserved device names, a colon in a name, `<>"|?*`, trailing space
+   or dot, `\` as a separator, drive-relative `C:foo`) are enforced for Windows paths only
+   (`Flavour.WINDOWS` in `core/pathrules.py`): on POSIX these are ordinary name characters that
+   a monitor must be able to watch (`/sys/devices/pci0000:00`). Both flavours run in the tests
+   on every OS. Refused in both flavours: UNC and device syntax (a `\\` prefix), a leading
+   drive-letter prefix such as `C:` (on POSIX as "looks like a Windows drive path"), URL-like
+   text, `..` and unsafe characters. One exception goes the other way: the demo sandbox refuses
+   a colon in a component on every OS (`fs/sandbox.py`).
 4. A baseline whose HMAC does not verify (tampered or wrong key) is refused with exit code 3. It is
    never parsed before verification and never silently trusted. A missing baseline is an error,
    never "no changes".
