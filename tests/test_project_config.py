@@ -129,13 +129,12 @@ def test_security_policy_uses_private_reporting_and_no_email() -> None:
     assert "@" not in text
 
 
-def test_readme_has_no_measurements_or_absolute_claims_yet() -> None:
+def test_readme_makes_no_absolute_security_claims_and_is_no_longer_a_placeholder() -> None:
     text = (REPO_ROOT / "README.md").read_text(encoding="utf-8").lower()
-    assert "work in progress" in text
-    # Measured numbers belong in docs/performance.md once scripts/bench.py has produced them.
-    assert not re.search(r"\d\s*(%|mb/s|files/s|files per second|ms\b)", text)
+    assert "work in progress" not in text  # Phase 6 made it the real README
     for claim in ("tamper-proof", "unbreakable", "unhackable", "guarantees", "100% secure"):
         assert claim not in text
+    # Every measured number in it is checked against docs/performance.md by tests/test_docs.py.
 
 
 def test_venv_and_secrets_are_ignored_by_git() -> None:

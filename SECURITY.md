@@ -17,4 +17,4 @@ This is a one-person project, so there is no guaranteed response time.
 
 ## Supported versions
 
-The project is pre-release. Once 1.0.0 exists, only the latest release receives fixes.
+Only the latest release (1.x) receives fixes.

@@ -264,8 +264,9 @@ README and docs in sync with this file.
   `MAX_BASELINE_BYTES`; if it is unreasonable for a laptop, the ceiling is lowered with the
   measured reason.
 - **D11 result (Phase 6, v0.4):** measured with `scripts/bench.py baseline-load`: the peak
-  working set of loading a baseline, and of a whole `check`, was 6.1 times the file's size
-  (1 454 MiB for a 238 MiB baseline of 800 817 records; 919 MiB for 149 MiB; 389 MiB for 60 MiB).
+  working set of loading a baseline, and of a whole `check`, was 6.1 to 6.5 times the file's
+  size from 60 MiB up (1 454 MiB for a 238 MiB baseline of 800 817 records; 919 MiB for 149 MiB;
+  389 MiB for 60 MiB).
   At 256 MiB that is about 1.5 GiB, too much for a monitor that `watch` re-reads every cycle on
   an 8 GiB laptop. `MAX_BASELINE_BYTES` (default and ceiling) is therefore **128 MiB**, about
   0.8 GiB at the peak. Full figures and the commands are in `docs/performance.md`. The
@@ -808,3 +809,34 @@ report written. Tagging and pushing are yours.
   still run all of them. Consequence recorded plainly: the default gate's branch coverage is now
   94.88% (it was 100.00%), because `app/watch.py` (28.24%) and `app/demo.py` (48.25%) are covered
   mostly by tests that are now slow; the full gate still reports 100.00%.
+- v0.4 (2026-10-10): Phase 6 implementation notes and the owner's Step 0 decisions (details in
+  docs/phase-reports.md). The version is 1.0.0. (1) Step 0, from the owner: CLAUDE.md invariant 3
+  now says the Windows name rules (reserved device names, a colon in a name, `<>"|?*`, trailing
+  space or dot, `\` as a separator, drive-relative `C:foo`) are enforced for Windows paths only,
+  and why (v0.3.8 item 2); one fast smoke test each for the `watch` loop and for `demo` is back in
+  the default gate (about 0.1 and 0.2 s), the other end-to-end tests stay `slow`, and the default
+  run's branch coverage is 98.47% again; the CI actions moved to `actions/checkout@v5` and
+  `actions/setup-python@v6` (D13 had said "you can bump them"; its text is left as written).
+  (2) `scripts/bench.py` and `docs/performance.md`: every number has its machine, operating
+  system, Python version, date and command. (3) D11 result: peak memory of loading a baseline,
+  and of a whole `check`, is 6.1 times the file's size, so `MAX_BASELINE_BYTES` is lowered from
+  256 MiB to 128 MiB (default and ceiling), see the D11 result note. Consequences, all intended:
+  the limits are part of the policy digest and are stored in every baseline, so the golden payload
+  (`tests/data/golden_payload.json`), its file hash and the pinned policy digest were regenerated
+  and differ from the old ones only by the limit value and the digest it feeds; a baseline made
+  under the old 256 MiB limit is refused as "signed but its content is invalid (limit above its
+  hard ceiling)" and must be made again (no release had been made). (4) `docs/threat-model.md`
+  names a test for every control row; the README has a claim-to-evidence table, a "What the tool
+  reads and writes" section and a Limitations section, all checked by `tests/test_docs.py`
+  (every test named in a document exists, the limits table, exit codes, every option and
+  default and the version agree with the code, no local path or user name is in a document).
+  (5) The review pass of `fs/observe.py`, `fs/safe_files.py`, `services/baseline_codec.py` and
+  `core/sanitize.py` found no code defect; the gaps it found are documented, not changed: on
+  Windows the open of a monitored file has no no-follow flag and the device and inode comparison
+  is the guard; a hard crash can leave a `.fim-*.tmp` copy (for a key, a copy of the key) in the
+  target's directory; `key_file` in the unauthenticated configuration is trusted input; letters
+  and symbols that render blank (U+3164, U+2800) are not escaped, which is D10 as written and is
+  listed under Limitations as a candidate for a later release. (6) Documents that held a local path
+  were redacted (`docs/siem-mapping.md`), and a test keeps local paths and the user name out of
+  every document. (7) `SECURITY.md` says that only the latest 1.x release receives fixes;
+  `Development Status` is `5 - Production/Stable` in `pyproject.toml` (the owner may prefer Beta).

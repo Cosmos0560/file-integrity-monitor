@@ -10,11 +10,12 @@ against this document field by field and against mini-siem's flattening limits.
 
 ## One line
 
-A real line, from the demo run pasted further down (the paths are those of the temporary
-directory it used):
+A real line, written by `fim check --format jsonl` on 2026-10-10 with `fim` 1.0.0 on Windows
+(the temporary directory is shown as `<TMP>`; `path_sha256` is the hash of the real path text, so
+it does not match the redacted `path`):
 
 ```json
-{"timestamp":"2026-10-10T11:19:31Z","host":"lab-01","message":"fim modified [high] C:\\Users\\Lenovo\\AppData\\Local\\Temp\\claude\\C--Studies-Projects-file-integrity-monitor\\99ea62e0-71f1-4e9d-b797-3ad333c51e09\\scratchpad\\siem-demo\\watched\\etc\\app.conf: sha256 differs (9b4d77c32e09ff07... -> 3360c8b101333928...); size 18 -> 31","event_type":"fim.modified","fim":{"kind":"modified","severity":"high","confidence":"high","path":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\claude\\C--Studies-Projects-file-integrity-monitor\\99ea62e0-71f1-4e9d-b797-3ad333c51e09\\scratchpad\\siem-demo\\watched\\etc\\app.conf","path_sha256":"3c5531014a43a667e754c71afae01f0b6f6a7d95547cdec3b166623a9105cbd2","path_truncated":"false","old_sha256":"9b4d77c32e09ff079e9a6a7056ae2850da8b5bdb01f20e7a44e63fc0786997ed","new_sha256":"3360c8b1013339284d77e64cccdc0724b2731427b1cefe42ef499379e2addc1e","old_size":"18","new_size":"31","evidence":"sha256 differs (9b4d77c32e09ff07... -> 3360c8b101333928...); size 18 -> 31","finding_id":"6e5af281570dbf03","baseline_sequence":1,"tool_version":"0.1.0","schema":"fim-event/1"}}
+{"timestamp":"2026-10-10T18:55:07Z","host":"lab-01","message":"fim modified [high] <TMP>\\lab\\etc\\app.conf: sha256 differs (e049009aabc94ce6... -> 58749731276250c5...); size 34 -> 41","event_type":"fim.modified","fim":{"kind":"modified","severity":"high","confidence":"high","path":"<TMP>\\lab\\etc\\app.conf","path_sha256":"db3efb1acda682df6923218da2897cc32a17b82405b4a5f48f7e4b0121eef214","path_truncated":"false","old_sha256":"e049009aabc94ce6cffdf75adff1fbeeaf79408a52a73c684d7a7170454c27a9","new_sha256":"58749731276250c50c6eb683eddd729318f64b46a52f1c6216dcaf0633f9eb51","old_size":"34","new_size":"41","evidence":"sha256 differs (e049009aabc94ce6... -> 58749731276250c5...); size 34 -> 41","finding_id":"83a082ae5632e841","baseline_sequence":1,"tool_version":"1.0.0","schema":"fim-event/1"}}
 ```
 
 ## Top level
@@ -81,8 +82,11 @@ re-read whenever this document changes):
 
 A demo tree was changed (a modified, a deleted, a permission-changed and two created files, one of
 them with a right-to-left override and a zero-width space in its name) and `fim watch --max-cycles
-2 --output events.jsonl` wrote 5 events. mini-siem's own `ingest` command was run from its own
-virtual environment with its data directory in a temporary folder outside both repositories:
+2 --output events.jsonl` wrote 5 events. This was done once, by hand, on 2026-10-10, with `fim`
+0.1.0 (the Phase 5 build, hence `tool_version` below); the event shape has not changed since and
+a test pins it, but the ingest itself was not repeated for 1.0.0. mini-siem's own `ingest`
+command was run from its own virtual environment with its data directory in a temporary folder
+outside both repositories:
 
 ```
 $ mini-siem ingest --data-dir <temp>/siem-work/data --format json <temp>/siem-demo/out/events.jsonl
@@ -115,7 +119,7 @@ fim.new_sha256           3360c8b1013339284d77e64cccdc0724b2731427b1cef...
 fim.new_size             31
 fim.old_sha256           9b4d77c32e09ff079e9a6a7056ae2850da8b5bdb01f20...
 fim.old_size             18
-fim.path                 C:\Users\Lenovo\AppData\Local\Temp\claude\C--Studies-Proj...
+fim.path                 <TMP>\siem-demo\watched\etc\app.conf
 fim.path_sha256          3c5531014a43a667e754c71afae01f0b6f6a7d95547cd...
 fim.path_truncated       false
 fim.schema               fim-event/1
