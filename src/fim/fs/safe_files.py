@@ -336,8 +336,21 @@ def write_own_file(
 
 
 # A hard link that fails for one of these reasons means the file system has no hard links (FAT,
-# exFAT, some network and removable file systems). Windows reports it as ERROR_INVALID_FUNCTION (1)
-# or ERROR_NOT_SUPPORTED (50), which Python maps to EINVAL.
+# exFAT, some network and removable file systems). Two vocabularies, never mixed:
+#
+# errno (every platform; on Windows Python derives it from the Win32 code):
+#   EPERM      Linux refuses link(2) on file systems that have none (vfat, some FUSE and SMB mounts)
+#   ENOTSUP / EOPNOTSUPP   the file system or the mount says "not supported" (different numbers on
+#              some platforms, the same on Linux, so both are listed)
+#   ENOSYS     the file system driver does not implement the operation
+#   EINVAL     what Python maps most unlisted Win32 codes to, including the two below
+#   EMLINK     the file system's link limit for this inode is zero or reached
+#
+# winerror (Windows only, because only there does OSError carry the attribute; POSIX ignores the
+# fourth constructor argument and never sets it, so a ``winerror`` found on a POSIX exception
+# means nothing there): 1 ERROR_INVALID_FUNCTION (exFAT, FAT, many removable volumes) and
+# 50 ERROR_NOT_SUPPORTED (network redirectors). Anything else, ERROR_ACCESS_DENIED (5) for one,
+# is a real failure and is not a reason to fall back.
 _NO_HARD_LINKS_ERRNOS = frozenset(
     {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS, errno.EINVAL, errno.EMLINK}
 )
@@ -345,9 +358,12 @@ _NO_HARD_LINKS_WINERRORS = frozenset({1, 50})
 
 
 def _hard_links_unsupported(exc: OSError) -> bool:
-    return exc.errno in _NO_HARD_LINKS_ERRNOS or getattr(exc, "winerror", None) in (
-        _NO_HARD_LINKS_WINERRORS
-    )
+    if exc.errno in _NO_HARD_LINKS_ERRNOS:
+        return True
+    if sys.platform == "win32":
+        return getattr(exc, "winerror", None) in _NO_HARD_LINKS_WINERRORS
+    else:  # a plain else, so mypy sees one reachable return per platform instead of dead code
+        return False
 
 
 def _publish(temp: str, path: str, force: bool, label: str, data: bytes, mode: int) -> None:

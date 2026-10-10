@@ -562,6 +562,7 @@ def test_a_failed_force_write_keeps_the_old_file_and_cleans_up(
     assert names(tmp_path) == ["out"]
 
 
+# errno values mean the same thing everywhere, so these run on every OS.
 NO_LINK_ERRORS = [
     OSError(errno.EPERM, "operation not permitted"),
     OSError(errno.ENOTSUP, "not supported"),
@@ -569,14 +570,82 @@ NO_LINK_ERRORS = [
     OSError(errno.ENOSYS, "not implemented"),
     OSError(errno.EINVAL, "invalid"),
     OSError(errno.EMLINK, "too many links"),
-    OSError(0, "function is not valid", None, 1),  # Windows: ERROR_INVALID_FUNCTION on exFAT
 ]
+NO_LINK_WINERRORS = [1, 50]  # ERROR_INVALID_FUNCTION (exFAT), ERROR_NOT_SUPPORTED (redirectors)
+
+
+def only_winerror(code: int) -> OSError:
+    """An error whose only sign of "no hard links" is a ``winerror`` attribute.
+
+    The 4th constructor argument is honoured on Windows only (POSIX ignores it, so the literal
+    ``OSError(0, "x", None, 1)`` is a different error on each OS: on Windows its errno becomes
+    EINVAL). A class attribute is the same on every OS, and errno EIO is no reason to fall back.
+    """
+
+    class WinerrorOnlyError(OSError):
+        winerror = code
+
+    return WinerrorOnlyError(errno.EIO, "carries only a winerror")
 
 
 @pytest.mark.parametrize("error", NO_LINK_ERRORS)
 def test_without_hard_links_the_file_is_created_directly_and_exclusively(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
 ) -> None:
+    assert_fallback_creates_the_file_exclusively(tmp_path, monkeypatch, error)
+
+
+@pytest.mark.windows_only
+@pytest.mark.parametrize("code", NO_LINK_WINERRORS)
+def test_on_windows_a_winerror_for_no_hard_links_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    assert_fallback_creates_the_file_exclusively(tmp_path, monkeypatch, only_winerror(code))
+    # The way a real exFAT volume reports it: the constructor form, errno derived by Python.
+    assert_fallback_creates_the_file_exclusively(
+        tmp_path / "again", monkeypatch, OSError(0, "function is not valid", None, code)
+    )
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("code", NO_LINK_WINERRORS)
+def test_on_posix_a_winerror_alone_is_not_a_reason_to_fall_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """The exact shape that failed on Linux CI, and its attribute form: they must raise."""
+    for error in (only_winerror(code), OSError(0, "function is not valid", None, code)):
+        monkeypatch.setattr("fim.fs.safe_files.os.link", raising(error))
+        with pytest.raises(FileAccessError, match="could not be published"):
+            write_file(str(tmp_path / "out"), b"d", force=False)
+        assert names(tmp_path) == []
+
+
+@pytest.mark.parametrize(("platform", "expected"), [("win32", True), ("linux", False)])
+@pytest.mark.parametrize("code", NO_LINK_WINERRORS)
+def test_winerror_codes_are_read_only_on_windows(
+    monkeypatch: pytest.MonkeyPatch, platform: str, expected: bool, code: int
+) -> None:
+    """The decision itself, on every OS, with the platform substituted."""
+    monkeypatch.setattr(sys, "platform", platform)
+    assert safe_files._hard_links_unsupported(only_winerror(code)) is expected
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_errno_codes_count_on_every_platform_and_other_codes_never(
+    monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    for error in NO_LINK_ERRORS:
+        assert safe_files._hard_links_unsupported(error) is True
+    for code in (5, 32, 183):  # access denied, sharing violation, already exists
+        assert safe_files._hard_links_unsupported(only_winerror(code)) is False
+    assert safe_files._hard_links_unsupported(OSError(errno.EIO, "io")) is False
+
+
+def assert_fallback_creates_the_file_exclusively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+) -> None:
+    tmp_path.mkdir(exist_ok=True)
     calls: list[str] = []
     real_open = os.open
 
@@ -669,7 +738,7 @@ def test_a_fallback_that_cannot_create_the_file_is_reported(
         OSError(errno.EIO, "io"),
         OSError(errno.EACCES, "denied"),
         OSError(errno.EXDEV, "cross-device"),
-        OSError(0, "access denied", None, 5),  # Windows ERROR_ACCESS_DENIED
+        only_winerror(5),  # ERROR_ACCESS_DENIED: a real failure on Windows, nothing on POSIX
     ],
 )
 def test_other_link_failures_are_not_a_reason_to_fall_back(
