@@ -1,6 +1,6 @@
 """Command line entry point. This is the only place that prints.
 
-Commands: ``init-key``, ``baseline``, ``check`` and ``watch``. Every error the tool
+Commands: ``init-key``, ``baseline``, ``check``, ``watch`` and ``demo``. Every error the tool
 raises on purpose is a ``FimError`` and leaves through here as one line on stderr and its exit
 code (PLAN.md section 1.5); the code never lets a traceback carry a file name to the terminal.
 Everything printed from the filesystem or the user's paths goes through the sanitiser first.
@@ -22,6 +22,7 @@ from fim.app.baseline import (
     run_init_key,
 )
 from fim.app.check import FORMATS, CheckRequest, run_check
+from fim.app.demo import run_demo
 from fim.app.watch import WATCH_FORMATS, WatchRequest, run_watch
 from fim.core.errors import ExitCode, FimError
 from fim.core.limits import (
@@ -189,6 +190,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch.set_defaults(handler=_watch)
 
+    demo = commands.add_parser(
+        "demo",
+        allow_abbrev=False,
+        help="run the whole workflow on throw-away files in a temporary directory",
+        description=(
+            "Create a temporary directory with a few files, a throw-away key and a signed "
+            "baseline, change the files, show what 'check' reports, show that a tampered "
+            "baseline is refused, and delete the directory again. It touches nothing else."
+        ),
+    )
+    demo.set_defaults(handler=_demo)
     return parser
 
 
@@ -308,6 +320,12 @@ def _watch(args: argparse.Namespace) -> int:
         f"fim watch {stopped}: {outcome.cycles} cycles, {outcome.events} events written",
         file=sys.stderr,
     )
+    return int(outcome.exit_code)
+
+
+def _demo(_args: argparse.Namespace) -> int:
+    outcome = run_demo(SystemClock())
+    print(outcome.text, end="")
     return int(outcome.exit_code)
 
 
