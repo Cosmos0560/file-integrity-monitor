@@ -840,3 +840,17 @@ report written. Tagging and pushing are yours.
   were redacted (`docs/siem-mapping.md`), and a test keeps local paths and the user name out of
   every document. (7) `SECURITY.md` says that only the latest 1.x release receives fixes;
   `Development Status` is `5 - Production/Stable` in `pyproject.toml` (the owner may prefer Beta).
+- v0.4.1 (2026-10-11): the owner's release decisions for 1.0.0 (details in docs/phase-reports.md).
+  (1) `Development Status` is `4 - Beta` in `pyproject.toml`, replacing item 7 of v0.4: the
+  numbers were measured on one machine and this is the first public release. (2)
+  `MAX_BASELINE_BYTES` at 128 MiB is accepted, with the D11 measurement as its reason (peak memory
+  6.1 to 6.5 times the file size); the `MAX_FILES` ceiling is unchanged, so the byte limit is the
+  effective bound for a configuration that raises `max_files` towards its ceiling. (3) Deferred
+  to 1.1: escaping of blank-looking letters and symbols (U+3164, U+2800 and similar), and the
+  memory optimisation of loading a baseline. (4) There is no Linux benchmark for 1.0. (5) README
+  Limitations now also say, plainly: a hard crash during a write of the key or the baseline can
+  leave a `.fim-*.tmp` file in the target's directory (mode 0600 on POSIX) that the user should
+  delete; `key_file` in the configuration is trusted as given; the numbers come from one Windows
+  machine with real-time antivirus on. (6) CHANGELOG.md has an Unreleased heading with a short
+  "Planned for 1.1" list: items (3) and the automatic cleanup of stale `.fim-*.tmp` files, and
+  nothing else.

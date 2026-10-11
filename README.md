@@ -546,9 +546,9 @@ reasoning, in [docs/threat-model.md](docs/threat-model.md).
   older validly signed baseline put back in place goes unnoticed. The same warning appears
   when a baseline file is moved or renamed, because the anchor is bound to the baseline's path
   (the next `fim baseline` writes a new one).
-- **`key_file` in the configuration is trusted.** Someone who can edit the configuration and the
-  baseline can point `check` at a key of their own. Pass `--key-file` from a place the watched
-  account cannot write.
+- **`key_file` in the configuration is trusted as given.** It is not authenticated: someone who can
+  edit the configuration and the baseline can point `check` at a key of their own. Pass
+  `--key-file` from a place the watched account cannot write.
 - **Access times.** Reading a file can update its access time (see above); this is documented,
   not hidden.
 - **Confusable and blank-looking glyphs.** Names are escaped for controls, bidi and
@@ -558,9 +558,10 @@ reasoning, in [docs/threat-model.md](docs/threat-model.md).
   JSONL identifies the exact path.
 - **The key file's ACL is not verified on Windows.** On POSIX a key that others can access is
   refused; on Windows the tool cannot judge, so keep the key in a directory only you can read.
-- **Temporary files.** A crash (power loss, `kill -9`) between creating a temporary file and
-  removing it can leave a `.fim-<random>.tmp` file in the target's directory. For a key, that is
-  a copy of the key.
+- **Temporary files.** `fim` writes its own files (key, baseline, anchor, report) through a
+  temporary file in the target's directory. A hard crash during such a write (power loss,
+  `kill -9`) can leave a `.fim-<random>.tmp` file there. On POSIX it has mode `0600`; for a key it
+  holds a copy of the key. `fim` does not remove it later, so delete it yourself.
 - **File systems without hard links (FAT, exFAT).** The no-clobber write falls back to an
   exclusive create: a crash can leave a partial file.
 - **A parent directory swapped between the checks and the write** is a documented residual
@@ -586,8 +587,9 @@ reasoning, in [docs/threat-model.md](docs/threat-model.md).
 - **Platforms.** Windows 11 and Ubuntu are tested; macOS is not. CI runs Python 3.11 to 3.13 on
   both operating systems. The Linux checks I ran in WSL use Python 3.14 only, so they find
   operating-system differences, not Python-version ones.
-- **Measured on one machine.** Every number in this README comes from one laptop (see
-  [docs/performance.md](docs/performance.md)); yours will differ.
+- **Measured on one machine.** Every number in this README comes from one Windows 11 laptop with
+  real-time antivirus (Windows Defender) on; nothing was benchmarked on Linux. Yours will differ
+  (see [docs/performance.md](docs/performance.md)).
 
 ## Performance
 

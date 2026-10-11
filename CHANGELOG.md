@@ -3,6 +3,15 @@
 All notable changes to `fim`. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Planned for 1.1
+
+- Escape letters and symbols that render blank (Hangul filler U+3164, Braille blank U+2800 and
+  similar) in displayed names.
+- Lower the peak memory of loading a baseline (the copies made while it is decoded).
+- Clean up stale `.fim-*.tmp` files left by a hard crash during a write, automatically.
+
 ## [1.0.0] - 2026-10-10
 
 First release. Everything below is new.

@@ -5,12 +5,11 @@ section 2. The last entry is what a new session reads first.
 
 ## In progress
 
-Nothing is in progress. Phase 6 is complete and committed locally; nothing was pushed or
-tagged. What is left is yours: push, check Actions (the first run with `actions/checkout@v5`
-and `actions/setup-python@v6`, and with Phase 6's tests on Python 3.11 to 3.13), tag v1.0.0
-and publish the release. The open questions are at the end of the Phase 6 entry. Before any
-later phase or fix is reported done: the full gate on Windows and, through WSL, on Linux
-(CLAUDE.md section 3).
+Nothing is in progress. Phase 6 is complete, pushed, and CI run #9 was green on all six jobs.
+The release-readiness pass of 2026-10-11 (last entry) answers the five open questions at the end
+of the Phase 6 entry and is committed locally; nothing was pushed or tagged. What is left is
+yours: push, check Actions, tag v1.0.0 and publish the release. Before any later phase or fix
+is reported done: the full gate on Windows and, through WSL, on Linux (CLAUDE.md section 3).
 
 Accepted by the owner: the deviations of v0.3.7 and v0.3.6 (on 2026-10-10, PLAN.md changelog
 v0.3.8), the Phase 3 deviations of v0.3.4 except the incomplete-scan one (changed in v0.3.5), all
@@ -613,4 +612,39 @@ Tests added: 19 (2443 collected after Phase 5, 2462 now): 12 in test_docs.py (ev
 Real coverage: 100.00% branch coverage (3434 statements, 1000 branches, 0 missing) in the full gate on Windows (2444 passed, 18 skipped) and on Linux in WSL (2430 passed, 17 skipped); the default gate prints 98.47%
 Known gaps: Linux ran on Python 3.14.4 only (CI covers 3.11 to 3.13, not seen yet for these commits); measurements are from one Windows machine with real-time protection on, one run outlier unexplained, Linux not benchmarked; the mini-siem ingest was done once by hand with 0.1.0; blank-looking letters are not escaped; a hard crash can leave a .fim-*.tmp copy of a key; key_file in the configuration is trusted; the load path uses about six times the baseline's size and was not optimised; the CWE ids were not re-checked against the live list (PyPI-only network)
 Deviations from PLAN.md: (1) MAX_BASELINE_BYTES 256 MiB to 128 MiB, as D11 authorises, MAX_FILES ceiling left alone; (2) the golden payload, its file hash and the pinned policy digest regenerated for that change; (3) bench trees use the ceiling time budget, found necessary by a measurement; (4) Development Status Production/Stable and SECURITY.md "latest 1.x"; (5) the README test of Phase 1 replaced; (6) the review pass changed no code
+```
+
+## Release-readiness pass before v1.0.0 (2026-10-11)
+
+No feature was added. The owner's decisions for the first public release, applied and recorded
+(PLAN.md changelog v0.4.1):
+
+| Phase 6 open question | Decision |
+|---|---|
+| 1. `Development Status` | `4 - Beta` in `pyproject.toml` (was `5 - Production/Stable`): measured on one machine, first public release. No test or document pinned the old value. |
+| 2. 128 MiB baseline limit, unchanged `MAX_FILES` ceiling | Accepted, with the D11 measurement (peak memory 6.1 to 6.5 times the file size) as the reason. The `MAX_FILES` ceiling is unchanged; the byte limit is the effective bound for a configuration that raises `max_files` towards its ceiling. |
+| 3. Escape blank-looking letters (U+3164, U+2800 and similar) | Deferred to 1.1. |
+| 4. Lower the peak memory of loading a baseline | Deferred to 1.1. |
+| 5. Linux benchmark | None for 1.0. |
+
+Also changed, in the documents only:
+
+- README Limitations: a hard crash during a write of the key or the baseline (or the anchor or a
+  report, which use the same path) can leave a `.fim-<random>.tmp` file in the target's
+  directory, mode `0600` on POSIX, which the user should delete; `key_file` in the configuration is
+  trusted as given; the numbers come from one Windows machine with real-time antivirus on and
+  nothing was measured on Linux.
+- CHANGELOG.md: an `Unreleased` heading with "Planned for 1.1": the two deferred items and the
+  automatic cleanup of stale `.fim-*.tmp` files, and nothing else.
+
+Gates, on the working tree before this commit: Windows `--full`, 2444 passed, 18 skipped
+(`posix_only`), 100.00% branch coverage (3434 statements, 1000 branches, 0 missing), 333.5 s. The
+results on the committed tree, on Windows and on Linux in WSL, are in the pass's chat summary.
+
+```
+Built: nothing new; the owner's release decisions applied (Beta classifier, limits and deferrals recorded, Limitations wording, CHANGELOG "Planned for 1.1")
+Tests added: 0 (2444 passed, 18 skipped in the full gate; no test pinned the classifier or the changed wording)
+Real coverage: 100.00% branch coverage (3434 statements, 1000 branches, 0 missing), full gate on Windows, working tree before the commit
+Known gaps: unchanged from Phase 6: Linux ran on Python 3.14.4 only and was not benchmarked; measurements are from one Windows machine with real-time protection on; blank-looking letters are not escaped; a hard crash can leave a .fim-*.tmp file; key_file in the configuration is trusted; the load path uses about six times the baseline's size
+Deviations from PLAN.md: none; the classifier (v0.4 item 7) and the Phase 6 open questions are decided by the owner (v0.4.1)
 ```
