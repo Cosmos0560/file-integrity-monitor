@@ -118,7 +118,7 @@ log; `dd201c8` `watch` and the jsonl/csv formats of `check`; `7779903` the sandb
 `b47d8cd` test setup once per run. Each slice went through the gate on its own tree (the later
 slices were set aside with `git stash --keep-index --include-untracked` while it ran).
 
-Manual mini-siem check, real output. mini-siem at `C:\Studies\Projects\mini-siem`, run from its own
+Manual mini-siem check, real output. mini-siem at `<MINI-SIEM>`, run from its own
 virtual environment (`.venv`, Python 3.13.14) with `python -B` and
 `PYTHONDONTWRITEBYTECODE=1`, working directory and `--data-dir` in a temporary directory outside
 both repositories; its source tree was only read. Before the run a marker file was created;
@@ -332,7 +332,7 @@ its real output, with the long package and wheel lists shortened and marked.
 
 ```
 ===== clean checkout of the commit =====
-$ git clone --quiet C:/Studies/Projects/file-integrity-monitor <RELEASE>\src
+$ git clone --quiet <REPO> <RELEASE>\src
 
 [exit code 0]
 
@@ -636,6 +636,11 @@ Also changed, in the documents only:
   nothing was measured on Linux.
 - CHANGELOG.md: an `Unreleased` heading with "Planned for 1.1": the two deferred items and the
   automatic cleanup of stale `.fim-*.tmp` files, and nothing else.
+- This file: two absolute local paths found by the independent hygiene scan of the pass (the
+  mini-siem directory in the Phase 5 entry and the clone source in the Phase 6 release check) are
+  shown as `<MINI-SIEM>` and `<REPO>`, like the other placeholders. `tests/test_docs.py` looks for
+  a home-directory path and the user name, which these two did not contain, so it had not caught
+  them.
 
 Gates, on the working tree before this commit: Windows `--full`, 2444 passed, 18 skipped
 (`posix_only`), 100.00% branch coverage (3434 statements, 1000 branches, 0 missing), 333.5 s. The
